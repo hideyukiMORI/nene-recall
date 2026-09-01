@@ -1,25 +1,81 @@
 // Package httpapi は HTTP のルーティングと入出力の変換を担う。
+//
+// 具体ストアや具体 Embedder は import しない。依存は index.Searcher /
+// index.Writer / Probe として注入される（ARC-001・depguard が強制する）。
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 
 	"github.com/hideyukiMORI/nene-recall/internal/config"
+	"github.com/hideyukiMORI/nene-recall/internal/index"
 	"github.com/hideyukiMORI/nene-recall/internal/org"
 )
 
+// Probe は依存1件の生存確認。
+//
+// 名前を持つのは、/healthz がどの依存が落ちているかを返すためである。
+// 「どこかが落ちている」だけでは運用者は次の一手を選べない。
+type Probe struct {
+	// Name は応答の checks に出る名前。"database" / "embedder"。
+	Name string
+	// Check は到達性を確かめる。nil を返せば正常。
+	Check func(ctx context.Context) error
+}
+
+// databaseProbeName は /healthz で致命的として扱う依存の名前。
+//
+// 🔴 DB が落ちていれば削除も含めて何もできないので down（503）。
+// 埋め込みだけが落ちている場合は削除は動くので degraded（同じく 503 だが、
+// 状態としては区別する）。この違いは運用者が復旧の順序を決めるための情報である。
+const databaseProbeName = "database"
+
+// Dependencies は Server が使う依存の束。
+//
+// 🔴 exhaustruct の対象にしてある。フィールドを足したのに配線を直し忘れると、
+// ゼロ値の依存を持ったサーバが「起動はする」状態になる。
+type Dependencies struct {
+	// Searcher は検索の実装。
+	Searcher index.Searcher
+	// Writer は投入・削除の実装。
+	Writer index.Writer
+	// EmbedderID は /healthz と検索応答に載せる識別子。
+	EmbedderID string
+	// Probes は /healthz と /readyz が確かめる依存。
+	Probes []Probe
+}
+
 // Server は HTTP ハンドラの集合。
+//
+// ゼロ値は無効である。必ず New を通すこと。
 type Server struct {
-	cfg config.Config
-	log *slog.Logger
+	cfg  config.Config
+	log  *slog.Logger
+	deps Dependencies
 }
 
 // New は Server を組み立てる。
-func New(cfg config.Config, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, log: log}
+//
+// 依存の欠落は error で返す。panic を使わないのは GO-005 の要求であり、
+// 配線の誤りは運用者が読める形で起動時に落とすべきものだからである。
+func New(cfg config.Config, log *slog.Logger, deps Dependencies) (*Server, error) {
+	switch {
+	case log == nil:
+		return nil, fmt.Errorf("%w: logger is required", errMissingDependency)
+	case deps.Searcher == nil:
+		return nil, fmt.Errorf("%w: Searcher is required", errMissingDependency)
+	case deps.Writer == nil:
+		return nil, fmt.Errorf("%w: Writer is required", errMissingDependency)
+	case deps.EmbedderID == "":
+		return nil, fmt.Errorf("%w: EmbedderID is required", errMissingDependency)
+	}
+
+	return &Server{cfg: cfg, log: log, deps: deps}, nil
 }
 
 // Routes は http.Handler を返す。
@@ -49,22 +105,6 @@ type errorResponse struct {
 	Error apiError `json:"error"`
 }
 
-// healthCheck は依存1件の状態。
-type healthCheck struct {
-	Status string `json:"status"`
-	Detail string `json:"detail,omitempty"`
-}
-
-// healthResponse は GET /healthz の応答。
-//
-// map[string]any ではなく型で書くのは、応答の形が OpenAPI と一致していることを
-// コンパイラに見張らせるため (GO-006)。
-type healthResponse struct {
-	Status     string                 `json:"status"`
-	Checks     map[string]healthCheck `json:"checks"`
-	EmbedderID string                 `json:"embedder_id"`
-}
-
 // writeJSON は JSON 応答を書く。
 //
 // body が any なのは JSON 符号化の境界だからで、この例外は encoder ヘルパに閉じる
@@ -87,22 +127,76 @@ func (s *Server) writeError(w http.ResponseWriter, status int, code, msg string)
 	s.writeJSON(w, status, errorResponse{Error: apiError{Code: code, Message: msg}})
 }
 
-// writeOrgIDError は org.ID の解決に失敗したことを 400 で返す。
+// decodeJSON は要求本文を読む。読めなければ 400 を書いて false を返す。
 //
-// 🔴 ここで「既定の org を使う」分岐を足さないこと。単一テナントで開発している限り
-// 症状が出ないまま、別テナントの文書を返す実装になる (ADR 0003)。
-func (s *Server) writeOrgIDError(w http.ResponseWriter, err error) {
-	s.writeError(w, http.StatusBadRequest, "org_id_invalid", err.Error())
+// dst が any なのは writeJSON と同じ JSON 境界の例外である。
+func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid_json", "request body is not valid JSON")
+
+		return false
+	}
+
+	return true
+}
+
+// writeRequestError は境界検証の失敗を 400 で返す。
+//
+// org.ErrInvalid だけは code を org_id_required に固定する。org_id の欠落は
+// 最も起きやすい誤りで、専用の code があるほうが呼び出し側が対処しやすい。
+func (s *Server) writeRequestError(w http.ResponseWriter, err error) {
+	var ve validationError
+	if errors.As(err, &ve) {
+		s.writeError(w, http.StatusBadRequest, ve.code, ve.message)
+
+		return
+	}
+
+	if errors.Is(err, org.ErrInvalid) {
+		s.writeError(w, http.StatusBadRequest, "org_id_required",
+			"org_id is required and must be a positive integer")
+
+		return
+	}
+
+	s.writeError(w, http.StatusBadRequest, "invalid_request", "request is not valid")
+}
+
+// writeDependencyError は下位層の失敗を写像表に従って応答に写す。
+//
+// 🔴 表に無い error は 500 の固定文言にする。内部の error 文字列を応答に載せない。
+// DSN・SQL・接続先が混じるためで、詳細は slog にだけ残す。
+func (s *Server) writeDependencyError(w http.ResponseWriter, op string, err error) {
+	for _, m := range failureMappings() {
+		if !errors.Is(err, m.sentinel) {
+			continue
+		}
+
+		s.log.Warn("dependency failure",
+			slog.String("op", op),
+			slog.String("code", m.code),
+			slog.Any("error", err),
+		)
+		s.writeError(w, m.status, m.code, m.message)
+
+		return
+	}
+
+	s.log.Error("unhandled failure",
+		slog.String("op", op),
+		slog.Any("error", err),
+	)
+	s.writeError(w, http.StatusInternalServerError, "internal", "internal server error")
 }
 
 // requireOrgID はクエリ文字列から org.ID を取り出す。
 //
 // 生成経路を org.ParseID の1本に絞っているので、「空なら既定値」という分岐は
-// このパッケージからは書けない。
+// このパッケージからは書けない (ADR 0003)。
 func (s *Server) requireOrgID(w http.ResponseWriter, r *http.Request) (org.ID, bool) {
 	id, err := org.ParseID(r.URL.Query().Get("org_id"))
 	if err != nil {
-		s.writeOrgIDError(w, err)
+		s.writeError(w, http.StatusBadRequest, "org_id_invalid", err.Error())
 
 		return 0, false
 	}
@@ -110,109 +204,19 @@ func (s *Server) requireOrgID(w http.ResponseWriter, r *http.Request) (org.ID, b
 	return id, true
 }
 
-func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
-	s.writeJSON(w, http.StatusOK, healthResponse{
-		Status:     "ok",
-		Checks:     map[string]healthCheck{},
-		EmbedderID: s.cfg.EmbedderID(),
-	})
-}
-
-func (s *Server) handleReadyz(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusOK)
-}
-
-// searchRequest は POST /v1/search の入力。
+// requireBodyOrgID は本文の org_id を検証済みの org.ID に変換する。
 //
-// OrgID をポインタで受けるのは、「0 が来た」と「キーが無かった」を区別するため。
+// ポインタで受けるのは「0 が来た」と「キーが無かった」を区別するため。
 // 値型だとどちらも 0 になり、欠落を検知できない。
-type searchRequest struct {
-	OrgID *int64   `json:"org_id"`
-	Query string   `json:"query"`
-	Limit int      `json:"limit"`
-	Alpha *float32 `json:"alpha"`
-}
-
-// orgID は本文の org_id を検証済みの org.ID に変換する。
-func (req searchRequest) orgID() (org.ID, error) {
-	if req.OrgID == nil {
+func requireBodyOrgID(raw *int64) (org.ID, error) {
+	if raw == nil {
 		return 0, fmt.Errorf("%w: org_id is required", org.ErrInvalid)
 	}
 
-	id, err := org.NewID(*req.OrgID)
+	id, err := org.NewID(*raw)
 	if err != nil {
-		return 0, fmt.Errorf("search request: %w", err)
+		return 0, fmt.Errorf("request: %w", err)
 	}
 
 	return id, nil
-}
-
-func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
-	var req searchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "invalid_json", "request body is not valid JSON")
-
-		return
-	}
-
-	if _, err := req.orgID(); err != nil {
-		s.writeError(w, http.StatusBadRequest, "org_id_required",
-			"org_id is required and must be a positive integer")
-
-		return
-	}
-
-	if req.Query == "" {
-		s.writeError(w, http.StatusBadRequest, "query_required", "query must not be empty")
-
-		return
-	}
-
-	s.writeError(w, http.StatusNotImplemented, "not_implemented", "search is not implemented yet")
-}
-
-// putChunksRequest は POST /v1/chunks の入力の、org_id 部分だけを見るための型。
-type putChunksRequest struct {
-	OrgID *int64 `json:"org_id"`
-}
-
-func (s *Server) handlePutChunks(w http.ResponseWriter, r *http.Request) {
-	var req putChunksRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "invalid_json", "request body is not valid JSON")
-
-		return
-	}
-
-	if req.OrgID == nil {
-		s.writeError(w, http.StatusBadRequest, "org_id_required",
-			"org_id is required and must be a positive integer")
-
-		return
-	}
-
-	if _, err := org.NewID(*req.OrgID); err != nil {
-		s.writeError(w, http.StatusBadRequest, "org_id_required",
-			"org_id is required and must be a positive integer")
-
-		return
-	}
-
-	s.writeError(w, http.StatusNotImplemented, "not_implemented", "chunk ingestion is not implemented yet")
-}
-
-func (s *Server) handleDeleteChunk(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireOrgID(w, r); !ok {
-		return
-	}
-
-	s.writeError(w, http.StatusNotImplemented, "not_implemented", "chunk deletion is not implemented yet")
-}
-
-func (s *Server) handleDeleteBySource(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireOrgID(w, r); !ok {
-		return
-	}
-
-	s.writeError(w, http.StatusNotImplemented, "not_implemented", "bulk deletion is not implemented yet")
 }
