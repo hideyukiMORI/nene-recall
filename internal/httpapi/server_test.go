@@ -15,8 +15,9 @@ import (
 func newTestServer() http.Handler {
 	cfg := config.Config{
 		Addr:            ":0",
-		Embedder:        "voyage",
-		EmbedModel:      "voyage-4",
+		Store:           config.StorePostgres,
+		Embedder:        "ollama",
+		EmbedModel:      "bge-m3",
 		EmbedDimensions: 1024,
 		DefaultAlpha:    0.7,
 	}
@@ -104,7 +105,7 @@ func TestHealthzReportsEmbedderID(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("response is not valid JSON: %v", err)
 	}
-	if body.EmbedderID != "voyage-4:1024" {
-		t.Fatalf("embedder_id = %q, want %q", body.EmbedderID, "voyage-4:1024")
+	if body.EmbedderID != "bge-m3:1024" {
+		t.Fatalf("embedder_id = %q, want %q", body.EmbedderID, "bge-m3:1024")
 	}
 }

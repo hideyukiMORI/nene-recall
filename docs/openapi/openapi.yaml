@@ -189,7 +189,7 @@ components:
           items: { $ref: '#/components/schemas/SearchResult' }
         embedder_id:
           type: string
-          example: voyage-4:1024
+          example: bge-m3:1024
           description: |
             検索に使った埋め込みモデルの識別子。保存済みベクトルとの
             互換判定に使う（ADR 0005）。

@@ -2,7 +2,11 @@
 
 ## Status
 
-accepted (2026-09-01)
+**superseded by [ADR 0007](0007-pgvector-over-brute-force.md)** (2026-09-01)
+
+> ⚠️ **性能分析は今も有効。** 10万件規模では総当たりで足りるという本 ADR の結論は覆っていない。
+> 判断が変わったのは市場価値という別の軸が追加されたためで、性能上の必要からではない。
+> 経緯は ADR 0007 を読むこと。
 
 ## Context
 
@@ -64,4 +68,4 @@ Phase 1 の想定規模は個人の文書と SMB のコーパスで、**10万チ
 - Issue: なし
 - PR: なし
 - Supersedes: none
-- Superseded by: none
+- Superseded by: ADR 0007

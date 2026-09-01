@@ -1,0 +1,23 @@
+# ローカル開発用の PostgreSQL + pgvector。
+#
+# Ollama はここに含めない。Windows 側でネイティブ実行して RTX 3090 を
+# 直接使う想定のため（ADR 0008）。WSL 内で動かしたい場合は各自で入れる。
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: recall
+      POSTGRES_PASSWORD: recall
+      POSTGRES_DB: recall
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recall -d recall"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  db-data:

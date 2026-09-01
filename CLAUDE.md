@@ -23,14 +23,19 @@ Claude Code / AI エージェント向け実行ガイド。このファイルだ
 
 Go 製の自己ホスト型 検索・取得サービス。チャンクを取り込み、ベクトル類似度と語彙一致の
 ハイブリッドで検索し、引用可能な chunk を JSON で返す HTTP API。
-単一バイナリ＋SQLite。外部ベクトル DB なし。cgo なし。
+**完全ローカル・費用0円。**
 
 ```
-個人利用 (CLI/script) ──┐
-                        ├─▶ NeNe Recall (Go) ─▶ SQLite
-NeNe Corpus (PHP) ┄┄┄┄┄┘         │
-  Phase 2・env で切替             └─▶ 埋め込みプロバイダ (Voyage AI / ローカル)
+┌─ Windows ────────────┐    ┌─ WSL ──────────────────────┐
+│ Ollama + bge-m3      │◀───┤ nene-recall (Go)           │
+│ RTX 3090             │HTTP│  ├ HTTP API                │
+│ ※変換のみ・状態なし   │───▶│  ├ ハイブリッド検索         │
+└──────────────────────┘    │  └ PostgreSQL + pgvector   │
+                            └────────────────────────────┘
 ```
+
+**Ollama はベクトル DB ではない。** テキスト→ベクトルの変換だけを行う状態のないサーバ。
+保存も検索も Recall（Go）の中。
 
 ---
 
@@ -39,33 +44,36 @@ NeNe Corpus (PHP) ┄┄┄┄┄┘         │
 | フェーズ | 状態 |
 | --- | --- |
 | Phase 0 骨組み・設計判断 | ✅ 完了（2026-09-01） |
-| Phase 1 単独動作する検索 API | 🔲 未着手 |
+| Phase 1 ローカル完結の検索 API | 🔲 未着手 |
 | Phase 2 Corpus 統合 | 🔲 未着手 |
 
-**動くもの:** `/healthz`・`/readyz`・全エンドポイントの `org_id` 検証・設定読み込み・graceful shutdown
+**動くもの:** `/healthz`・`/readyz`・全エンドポイントの `org_id` 検証・設定の検証・graceful shutdown
 **動かないもの:** `/v1/search` と `/v1/chunks` 系は `501 Not Implemented`
 
 ### Phase 1 の残作業（着手順）
 
-1. **SQLite ストア** — `internal/store`。`modernc.org/sqlite`（純 Go・cgo なし）。
-   スキーマ・マイグレーション・埋め込みの BLOB 保存
-2. **Voyage 埋め込みクライアント** — `internal/embed/voyage.go`。
-   `Embedder` を実装。`input_type` を必ず指定する
-3. **ベクトル検索** — 起動時にメモリへロードし、総当たり内積（ADR 0004）
-4. **語彙検索** — 未決。SQLite FTS5 か Go 側 BM25 か（`docs/requirements.md` Q-1）
+1. **Postgres ストア** — `internal/store/postgres`。ドライバは `jackc/pgx`（**純 Go**）。
+   スキーマ・マイグレーション・`vector(1024)` 列。**索引はまだ作らない**（ADR 0007）
+2. **Ollama 埋め込みクライアント** — `internal/embed/ollama.go`。`Embedder` を実装
+3. **ベクトル検索** — pgvector の距離演算子。索引なしの全探索から
+4. **語彙検索** — 未決。Postgres の `tsvector` か Go 側 BM25 か（要件定義 Q-1）
 5. **ハイブリッド合成** — `alpha*vector + (1-alpha)*lexical`
-6. **CLI** — 個人利用の入口。`org_id` の既定値は**CLI 側に置く。サーバ側には置かない**
+6. **評価** — `make eval`。`testdata/eval/` に日本語の正解セット。recall@k・MRR・p95（ADR 0009）
+7. **実測と HNSW** — ベンチを取り `docs/benchmarks/` に記録してから索引を入れる。before/after を残す
+8. **SQLite ストア**（比較用）— `RECALL_STORE=sqlite`。同一データでの比較が成果物になる
+9. **CLI** — 個人利用の入口。`org_id` の既定値は**CLI 側に置く。サーバ側には置かない**
 
 ---
 
 ## 開発コマンド
 
 ```bash
-make test     # go test ./... -race -cover
-make vet      # go vet ./...
-make build    # bin/recall
-make run      # 起動（.env が要る）
-make fmt      # gofmt
+docker compose up -d      # PostgreSQL + pgvector (pgvector/pgvector:pg17)
+ollama pull bge-m3        # Windows 側で実行
+make test                 # go test ./... -race -cover
+make vet
+make build                # bin/recall
+make run                  # .env が要る
 ```
 
 Go は `/usr/local/go/bin`（1.27.0・公式 tarball から導入）。
@@ -84,44 +92,66 @@ Corpus では分離条件が SQL の WHERE 句に埋まっていた（`PdoChunkS
 ここを緩めると、あるテナントの検索が別テナントの文書を返す。
 そして**単一テナントで開発・テストしている限り、この欠陥は一切症状を出さない**。
 
-`internal/httpapi/server_test.go` の `TestOrgIDIsMandatory` が縛っている。
-このテストを緩める変更は入れないこと。正本は `docs/adr/0003-org-id-is-mandatory.md`。
+`internal/httpapi/server_test.go` の `TestOrgIDIsMandatory` が10ケースで縛っている。
+このテストを緩める変更は入れないこと。正本は ADR 0003。
 
 ### 2. 埋め込みモデルを変えたら保存済みベクトルは無効
 
 次元が一致していても異なるモデルのベクトルは比較できない。
 **エラーにならないまま無意味なスコアが返る。**
-`Embedder.ID()`（例 `voyage-4:1024`）を保存済みベクトルのメタデータに記録し、
+`Embedder.ID()`（例 `bge-m3:1024`）を保存済みベクトルのメタデータに記録し、
 不一致を検知して拒否すること。ADR 0005。
 
-### 3. `input_type` を省略しない
+ローカル実行はモデルの切替が容易なぶん、**この罠を踏みやすくなっている**。
 
-Voyage の `input_type` は取り込み時 `document`、検索時 `query`。
-公式 FAQ が「省略や `None` は検索品質を落とす」と明記している。
-これは実装の任意事項ではなく**プロバイダの要求**。
-`Embedder.Embed` が `Kind` を必須引数に取るのはそのため——既定値を持たせない設計は意図的。
+### 3. `Kind` はプロバイダごとに意味が違う。呼び出し側は常に渡す
 
-### 4. Anthropic に埋め込み API は無い
+| プロバイダ | `Kind` の扱い |
+| --- | --- |
+| `bge-m3` | 接頭辞もパラメータも**不要**。無視してよい |
+| `multilingual-e5` | **`query: ` / `passage: ` の接頭辞が必須**。付け忘れで品質低下 |
+| Voyage | `input_type` として送る。省略は品質低下（公式 FAQ 明記） |
 
-「Claude で埋め込みを取る」は**できない**。公式ドキュメントが明記している:
-> Anthropic does not offer its own embedding model.
+差異を実装側に閉じ込めるのがインタフェースの役割。
+**呼び出し側は実装が使うかに関わらず必ず `Kind` を渡す。** ADR 0008。
 
-探しに行かないこと。埋め込みは Voyage AI か自前のローカル推論。
+### 4. Anthropic に埋め込み API は無い。サブスクは API ではない
+
+- 「Claude で埋め込みを取る」は**できない**。公式が
+  `Anthropic does not offer its own embedding model.` と明記している。探しに行かないこと
+- **ChatGPT / Grok のサブスクリプションは API アクセス権ではない。** 別課金
+- **`codex` をサブプロセスで叩いて埋め込みを得ることはできない。**
+  生成モデルに「ベクトルを出せ」と頼んでも、それらしい数値を作文するだけで
+  意味的な距離が保存されない。埋め込みは専用に訓練された別種のモデル
 
 ### 5. cgo を持ち込まない
 
-`sqlite-vec` や `mattn/go-sqlite3` は cgo を要求する。
-単一バイナリ・クロスコンパイル可能という前提が壊れる（ADR 0004）。
-SQLite ドライバは純 Go の `modernc.org/sqlite` を使う。
+ドライバは純 Go の `jackc/pgx` を使う。`lib/pq` は非推奨、`sqlite-vec` や
+`mattn/go-sqlite3` は cgo を要求する。クロスコンパイル可能という前提が壊れる。
+SQLite ストア（比較用）も純 Go の `modernc.org/sqlite` を使う。
 
-### 6. ADR 0004 の正しさには期限がある
+### 6. 🔑 HNSW 索引を最初から作らない
 
-総当たり内積は 10万チャンクまでの判断。**再評価トリガー:**
-- チャンク数が 10万を超えた
-- 検索 p95 が 200ms を超えた
+ADR 0007 の要点は「pgvector を選んだこと」ではなく「**測ってから索引を入れた経路**」。
+最初から索引を張ると、**なぜ入れたかを数字で語れなくなり、ADR 0007 の価値が消える**。
 
-どちらかに触れたら ADR 0004 を supersede して近似最近傍を検討する。
-監視していなければ、遅くなってから気づくことになる。
+手順は固定:
+1. 索引なしで Phase 1 を完成させる
+2. 10万件規模で p95 と recall を測り `docs/benchmarks/` に残す
+3. `CREATE INDEX ... USING hnsw` を入れて before/after を並べて記録する
+
+### 7. `alpha` の 0.7 に根拠は無い
+
+現状ただの当て推量（要件定義 Q-3）。ADR 0009 の評価セットで最適値を決めるまで、
+この値を「調整済み」であるかのように文書やコメントに書かないこと。
+
+### 8. 検索の評価に LLM を使わない
+
+`recall@k` と `MRR` は正解セットとの突き合わせで、純粋な集合演算。LLM を1回も呼ばない。
+`ragas` の faithfulness のような LLM 審査員は**生成の評価**であって検索の評価ではなく、
+生成は Recall のスコープ外（要件定義 §3.3）。
+
+**結果として、最も価値の高い検証が最も費用のかからない方法で行える。** この性質を壊さないこと。
 
 ---
 
@@ -139,11 +169,15 @@ SQLite ドライバは純 Go の `modernc.org/sqlite` を使う。
 ## 規約
 
 - **ライセンス**: MIT（フリート標準）
-- **公開リポの docs**: 要件定義・ADR・OpenAPI のみを正とする。
+- **費用**: **既定構成に有料サービス・有料ツールを持ち込まない。**
+  外部 API を既定にする変更は ADR で明示的に判断すること
+- **公開リポの docs**: 要件定義・ADR・OpenAPI・ベンチマークのみを正とする。
   運用ログ・日報の類はここに置かない
 - **設計判断は必ず ADR にする**。`docs/adr/0000-template.md` を複製して書く。
-  「なぜそうしなかったか」（却下した選択肢とその理由）を必ず残すこと
+  **「なぜそうしなかったか」（却下した選択肢とその理由）を必ず残す。**
+  supersede するときは、旧 ADR のどの部分が今も有効かを明記すること
+  （ADR 0004 → 0007 が実例: 性能分析は有効、判断軸が変わっただけ）
 - **コメントは「なぜ」を書く**。「何を」はコードが語る。
-  特に上の地雷に関わる箇所は、次に読む人が緩めないようコメントで理由を残す
+  特に上の地雷に関わる箇所は、次に読む人が緩めないよう理由を残す
 - **エラー応答に API キーを混ぜない**。`config.Config` は `String()` を実装していないので、
   構造体ごと `%v` でログに出すと `VoyageAPIKey` が漏れる。個別フィールドを選んでログする

@@ -2,7 +2,11 @@
 
 ## Status
 
-accepted (2026-09-01)
+accepted (2026-09-01) — **既定値のみ [ADR 0008](0008-local-embedding-by-default.md) で反転**
+
+> インタフェースによる抽象化という本 ADR の決定は有効。
+> ただし既定は Voyage AI ではなく **ローカル実行（Ollama + bge-m3）** になった。
+> Voyage は任意経路に降格。詳細は ADR 0008。
 
 ## Context
 
@@ -66,4 +70,5 @@ type Embedder interface {
 - Issue: なし
 - PR: なし
 - Supersedes: none
+- Amended by: ADR 0008（既定値のみ）
 - Superseded by: none
