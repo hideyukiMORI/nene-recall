@@ -117,7 +117,9 @@ func (s *Store) encodeQueryText(ctx context.Context, text string) (string, error
 	// （multilingual-e5 は接頭辞が変わり、Voyage は input_type が変わる。ADR 0008）。
 	vectors, err := s.embedder.Embed(ctx, []string{text}, embed.KindQuery)
 	if err != nil {
-		return "", fmt.Errorf("%w: embed: %s", errSearch, err.Error())
+		// 🔴 %w を2つ使う理由は writer.go の同じ箇所と同じ。
+		// 埋め込み側の sentinel を切ると 503 写像が成立しなくなる。
+		return "", fmt.Errorf("%w: embed: %w", errSearch, err)
 	}
 
 	if len(vectors) != 1 {

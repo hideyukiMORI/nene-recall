@@ -191,3 +191,36 @@ func TestDeleteSucceedsWhenNothingMatches(t *testing.T) {
 		t.Errorf("消えた件数 = %d, want 0", deleted)
 	}
 }
+
+// TestProviderUnavailablePropagates は埋め込み側の sentinel が連鎖に残ることを見る。
+//
+// 🔴 これが切れていると httpapi は 503 に写せず 500 を返す。呼び出し側から見ると
+// 「Ollama を起動し忘れた」が「サーバ内部エラー」になり、原因に辿り着けない。
+// ストア内部の error（errWrite / errSearch）で包んでもなお、埋め込み側の
+// sentinel が errors.Is で見えることを Put と Search の両方で確かめる。
+func TestProviderUnavailablePropagates(t *testing.T) {
+	e := newFakeEmbedder("fake:1024")
+	e.angles["問い"] = 0
+	ts := newTestStore(t, e)
+	orgA := mustOrgID(t, 1)
+
+	// プロバイダが落ちた状態にする。
+	e.unavailable = true
+
+	t.Run("Put", func(t *testing.T) {
+		_, err := ts.store.Put(t.Context(), orgA, threeChunks(t))
+		if !errors.Is(err, embed.ErrProviderUnavailable) {
+			t.Errorf("err = %v, want embed.ErrProviderUnavailable", err)
+		}
+	})
+
+	t.Run("Search", func(t *testing.T) {
+		_, err := ts.store.Search(t.Context(), newQuery(querySpec{
+			orgID: orgA, text: "問い", limit: 10, alpha: 1,
+			documentIDs: nil, sourceIDs: nil,
+		}))
+		if !errors.Is(err, embed.ErrProviderUnavailable) {
+			t.Errorf("err = %v, want embed.ErrProviderUnavailable", err)
+		}
+	})
+}
