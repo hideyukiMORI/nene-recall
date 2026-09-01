@@ -153,7 +153,11 @@ func TestEncodeReportProducesReadableJSON(t *testing.T) {
 		eval.Measurement{
 			Conditions: eval.Conditions{
 				OrgID: 1, Alpha: 0.7, AlphaNote: "not tuned", Limit: 10, Rounds: 5,
-				WarmupRounds: 1, KValues: eval.KValues(), PercentileMethod: eval.PercentileMethod,
+				WarmupRounds: 1, KValues: eval.KValues(),
+				GoldLengthThresholdRunes: eval.GoldLengthThreshold,
+				LongChunkKeys:            eval.LongGoldKeys(),
+				Ranking:                  testReportRanking(),
+				PercentileMethod:         eval.PercentileMethod,
 			},
 			Queries: nil,
 			Summary: eval.Summary{
@@ -162,7 +166,12 @@ func TestEncodeReportProducesReadableJSON(t *testing.T) {
 					WithEmbedding:    eval.LatencyStats{Samples: 0, MinMS: 0, P50MS: 0, P95MS: 0, MaxMS: 0},
 					WithoutEmbedding: eval.LatencyStats{Samples: 0, MinMS: 0, P50MS: 0, P95MS: 0, MaxMS: 0},
 				},
-				TagRecall: nil,
+				TagRecall:        nil,
+				MicroRecall:      eval.MicroRecall{Hits: 0, Total: 0, Cutoff: 10, Value: 0},
+				GoldLengthRecall: nil,
+				LongChunkRecall: eval.LongChunkRecall{
+					Keys: nil, Hits: 0, Total: 0, Value: 0,
+				},
 			},
 		},
 		time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),

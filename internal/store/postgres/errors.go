@@ -48,6 +48,41 @@ var errEmbedderDimensions = errors.New("postgres: embedder dimensions do not mat
 // 取り込みの瞬間に制約違反という分かりにくい形で落ちる。構築時に潰す。
 var errEmbedderID = errors.New("postgres: embedder returned an empty identifier")
 
+// errUnknownFusion は未知の融合方式が指定されたことを表す。
+//
+// 🔴 未知の指定を既定へ黙って倒さない。綴り誤りが「既定で測った」結果として
+// 記録され、後から条件を取り違える。計測の条件は必ず明示的に決まること。
+var errUnknownFusion = errors.New("postgres: unknown fusion method")
+
+// errTokenizerID は Tokenizer が無い、または空の識別子を返したことを表す。
+//
+// tokenizer_id 列も空文字を拒否する CHECK を持つ。理由は errEmbedderID と同じ。
+var errTokenizerID = errors.New("postgres: tokenizer is missing or returned an empty identifier")
+
+// ---------------------------------------------------------------------------
+// トークンの契約違反
+// ---------------------------------------------------------------------------
+
+// errTokenInvalid は、トークンが lexical.Tokenizer の契約を満たしていないことを表す。
+//
+// 個別の理由（空白・メタ文字）はこれを包む。errors.Is はこの入れ子を辿る。
+var errTokenInvalid = errors.New("postgres: token does not satisfy the Tokenizer contract")
+
+// errTokenHasWhitespace は、トークンが空白文字を含むことを表す。
+//
+// 🔴 トークン列は空白区切りの1本の文字列として保存される。空白を含むトークンは
+// DB の中で2つ以上のレキシームに割れ、「Go 側は1トークンのつもりなのに
+// DB では別物」という検出しにくい壊れ方をする。取り込みの時点で失敗にする。
+var errTokenHasWhitespace = fmt.Errorf("%w: token contains whitespace", errTokenInvalid)
+
+// errTokenHasMetaCharacter は、トークンが tsquery のメタ文字を含むことを表す。
+//
+// 🔴 検索式は「トークンを | で繋いだもの」を to_tsquery に渡して作る。
+// トークンが & | ! ( ) : * < > や引用符を含むと構文が壊れ、検索そのものが
+// 失敗する。黙って落とす実装にはしない——落とすと、語彙スコアが静かに
+// 欠けたまま「動いている」状態になり、分割器の不具合が誰にも見えなくなる。
+var errTokenHasMetaCharacter = fmt.Errorf("%w: token contains a tsquery meta character", errTokenInvalid)
+
 // ---------------------------------------------------------------------------
 // マイグレーション
 // ---------------------------------------------------------------------------

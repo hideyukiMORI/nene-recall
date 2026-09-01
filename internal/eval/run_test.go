@@ -40,7 +40,18 @@ func defaultOptions(t *testing.T, rounds int) eval.Options {
 		t.Fatalf("org.NewID: %v", err)
 	}
 
-	return eval.Options{OrgID: id, Alpha: 1, Limit: eval.DefaultLimit, Rounds: rounds}
+	return eval.Options{
+		OrgID: id, Alpha: 1, Limit: eval.DefaultLimit, Rounds: rounds,
+		Ranking: testRanking(),
+	}
+}
+
+// testRanking はテストで使う順位付け条件の記録。
+//
+// internal/eval はこの中身を解釈しないので、値そのものに意味は無い。
+// 空でないことだけが要求される（条件の記録が欠けたレポートを作らせないため）。
+func testRanking() eval.RankingSettings {
+	return eval.RankingSettings{Fusion: "weighted-sum", TsRankNormalization: 0, RRFK: 60}
 }
 
 // newTestRunner は偽の索引と偽の埋め込みで Runner を組む。
@@ -78,12 +89,12 @@ func TestMeasureMapsResultsBackToEvalKeys(t *testing.T) {
 	}
 
 	wantFirst := []string{"doc-a#001", "doc-a#002"}
-	if !equalStrings(got.Queries[0].RankedKeys, wantFirst) {
+	if !equalStrings(eval.RankedKeysOf(got.Queries[0].RankedKeys), wantFirst) {
 		t.Errorf("q-1 の順位 = %v, want %v", got.Queries[0].RankedKeys, wantFirst)
 	}
 
 	wantSecond := []string{"doc-a#002", "doc-b#001"}
-	if !equalStrings(got.Queries[1].RankedKeys, wantSecond) {
+	if !equalStrings(eval.RankedKeysOf(got.Queries[1].RankedKeys), wantSecond) {
 		t.Errorf("q-2 の順位 = %v, want %v", got.Queries[1].RankedKeys, wantSecond)
 	}
 }
@@ -321,10 +332,16 @@ func TestMeasureRejectsInvalidOptions(t *testing.T) {
 	valid := defaultOptions(t, 1)
 
 	cases := map[string]eval.Options{
-		"org_id がゼロ値": {OrgID: 0, Alpha: 1, Limit: 10, Rounds: 1},
-		"limit が 0":   {OrgID: valid.OrgID, Alpha: 1, Limit: 0, Rounds: 1},
-		"rounds が 0":  {OrgID: valid.OrgID, Alpha: 1, Limit: 10, Rounds: 0},
-		"alpha が範囲外":  {OrgID: valid.OrgID, Alpha: 1.5, Limit: 10, Rounds: 1},
+		"org_id がゼロ値": {OrgID: 0, Alpha: 1, Limit: 10, Rounds: 1, Ranking: testRanking()},
+		"limit が 0":   {OrgID: valid.OrgID, Alpha: 1, Limit: 0, Rounds: 1, Ranking: testRanking()},
+		"rounds が 0":  {OrgID: valid.OrgID, Alpha: 1, Limit: 10, Rounds: 0, Ranking: testRanking()},
+		"alpha が範囲外":  {OrgID: valid.OrgID, Alpha: 1.5, Limit: 10, Rounds: 1, Ranking: testRanking()},
+		// 🔴 条件の記録が欠けたレポートは、後から条件を特定できないので正本に
+		// なれない。融合方式の記録が空なら計測そのものを止める。
+		"融合方式の記録が空": {
+			OrgID: valid.OrgID, Alpha: 1, Limit: 10, Rounds: 1,
+			Ranking: eval.RankingSettings{Fusion: "", TsRankNormalization: 0, RRFK: 60},
+		},
 	}
 
 	for name, opts := range cases {
@@ -405,8 +422,8 @@ func TestSummaryIsRecomputableFromTheRawData(t *testing.T) {
 	var recalls, ranks []float64
 
 	for _, q := range got.Queries {
-		recalls = append(recalls, eval.RecallAt(q.RankedKeys, q.Relevant, 10))
-		ranks = append(ranks, eval.ReciprocalRank(q.RankedKeys, q.Relevant))
+		recalls = append(recalls, eval.RecallAt(eval.RankedKeysOf(q.RankedKeys), q.Relevant, 10))
+		ranks = append(ranks, eval.ReciprocalRank(eval.RankedKeysOf(q.RankedKeys), q.Relevant))
 	}
 
 	if want := eval.Mean(recalls); recallAt(t, got.Summary.Recall, 10) != want {

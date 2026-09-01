@@ -8,6 +8,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/hideyukiMORI/nene-recall/internal/embed"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical"
 	"github.com/hideyukiMORI/nene-recall/internal/store/postgres"
 )
 
@@ -50,6 +51,37 @@ type testStore struct {
 func newTestStore(t *testing.T, e embed.Embedder) *testStore {
 	t.Helper()
 
+	return newTestStoreWith(t, defaultStoreSpec(e))
+}
+
+// storeSpec はテスト用ストアの組み立て指定。
+//
+// 引数を4つ以下に保つための入れ物 (GO-011)。フィールドを足したときに
+// 呼び出し側が全部見直されるよう、exhaustruct が全項目の明示を強制する。
+type storeSpec struct {
+	embedder  embed.Embedder
+	tokenizer lexical.Tokenizer
+	fusion    postgres.Fusion
+}
+
+// defaultStoreSpec は既定の指定を返す。
+//
+// 融合方式の既定は加重和である（既定を変えるのは実測を見て ADR を書いてから）。
+func defaultStoreSpec(e embed.Embedder) storeSpec {
+	return storeSpec{
+		embedder:  e,
+		tokenizer: newFakeTokenizer("fake-tokenizer:1"),
+		fusion:    postgres.FusionWeightedSum,
+	}
+}
+
+// newTestStoreWith は分割器と融合方式も指定してテスト用ストアを作る。
+//
+// 既定から外したいのは、tokenizer_id の不一致検知・実物の分割器を使う
+// 往復同一性テスト・融合方式の比較だけである。それ以外は newTestStore でよい。
+func newTestStoreWith(t *testing.T, spec storeSpec) *testStore {
+	t.Helper()
+
 	recreateTestDatabase(t)
 
 	db, err := postgres.Open(t.Context(), testDSN)
@@ -57,7 +89,7 @@ func newTestStore(t *testing.T, e embed.Embedder) *testStore {
 		t.Fatalf("テスト用 DB へ接続できない: %v", err)
 	}
 
-	store, err := postgres.New(db, e)
+	store, err := postgres.New(db, spec.embedder, spec.tokenizer, spec.fusion)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -116,12 +148,19 @@ func recreateTestDatabase(t *testing.T) {
 func attachStore(t *testing.T, e embed.Embedder) *postgres.Store {
 	t.Helper()
 
+	return attachStoreWith(t, defaultStoreSpec(e))
+}
+
+// attachStoreWith は指定を明示して、既にあるテスト用 DB へ別の Store を繋ぐ。
+func attachStoreWith(t *testing.T, spec storeSpec) *postgres.Store {
+	t.Helper()
+
 	db, err := postgres.Open(t.Context(), testDSN)
 	if err != nil {
 		t.Fatalf("テスト用 DB へ接続できない: %v", err)
 	}
 
-	store, err := postgres.New(db, e)
+	store, err := postgres.New(db, spec.embedder, spec.tokenizer, spec.fusion)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

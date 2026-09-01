@@ -20,6 +20,7 @@ import (
 	"github.com/hideyukiMORI/nene-recall/internal/embed"
 	"github.com/hideyukiMORI/nene-recall/internal/embed/ollama"
 	"github.com/hideyukiMORI/nene-recall/internal/httpapi"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical/bigram"
 	"github.com/hideyukiMORI/nene-recall/internal/store/postgres"
 )
 
@@ -172,7 +173,11 @@ func openPostgres(ctx context.Context, cfg config.Config, embedder embed.Embedde
 
 	// ここで Embedder の次元と vector(1024) 列の突き合わせが効く。
 	// 食い違っていれば「起動はするが取り込みが全部落ちる」前に落ちる。
-	store, err := postgres.New(db, embedder)
+	// 🔴 融合方式を配線点で明示する。ゼロ値でも同じ方式になるが、書かないと
+	// 「既定がどちらか」がコードから読めなくなる。加重和は要件定義 F-4 と
+	// OpenAPI が定める契約そのものなので、サーバはこれを使う。方式を変えるのは
+	// 実測を見て ADR を書いてからである。
+	store, err := postgres.New(db, embedder, bigram.New(), postgres.FusionWeightedSum)
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("build store: %w", err), db.Close())
 	}

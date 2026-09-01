@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
+	"unicode"
 )
 
 // vectorDimensions は保存するベクトルの次元数。
@@ -83,6 +85,78 @@ func encodeInt64Array(ids []int64) string {
 	}
 
 	return string(append(buf, '}'))
+}
+
+// tsqueryMetaCharacters は tsquery の構文で意味を持つ文字。
+//
+// & | ! ( ) は演算子、: は重み指定、* は前方一致、< > は距離演算子 <N>、
+// 引用符と逆斜線は字句の囲みと退避に使われる。トークンはこの式の被演算子と
+// してそのまま置かれるので、1文字でも混ざると構文が壊れる。
+const tsqueryMetaCharacters = `&|!():*<>'"\`
+
+// tsqueryOr はトークンを繋ぐ演算子。
+//
+// 🔴 AND (&) にしないこと。長いクエリで1語でも本文に無ければスコアが 0 になり、
+// 「どれだけ重なったか」という段階的な情報が失われる。ハイブリッド合成が
+// 欲しいのは連続値であって真偽値ではない。
+const tsqueryOr = " | "
+
+// encodeLexemeText はトークン列を lexeme_text 列に入れる形にする。
+//
+// 空白区切りで並べるだけである。DB 側の生成列が to_tsvector('simple', …) で
+// レキシームに直す（migrations/0002_add_lexemes.sql）。
+//
+// 空のトークン列は空文字になる。これは正常な入力（分割できる語が無い本文）で
+// あり、lexemes は空の tsvector になって何にも一致しない。
+func encodeLexemeText(tokens []string) (string, error) {
+	if err := validateTokens(tokens); err != nil {
+		return "", err
+	}
+
+	return strings.Join(tokens, " "), nil
+}
+
+// encodeTsQuery はトークン列を to_tsquery に渡す検索式にする。
+//
+// 🔴 引用符で囲まない。囲むとパーサを迂回して1レキシームとして扱われるが、
+// 取り込み側（to_tsvector）は囲まれていない本文をパーサに通している。
+// 片側だけがパーサを迂回すると、RECALL_STORE のように下線で割れる語で
+// 索引と検索のレキシームがずれ、「同じ関数を通しているのに一致しない」と
+// いう検出しにくい壊れ方をする。両側を同じパーサに通すことが正しさの根拠である。
+//
+// 空のトークン列は空文字になる。空文字を渡した to_tsquery は空の tsquery を
+// 返し（NOTICE は出るがエラーではない・実測）、ts_rank は 0 を返す。
+// つまり語彙スコアが 0 に落ちて合成が alpha*vector に縮退する。
+func encodeTsQuery(tokens []string) (string, error) {
+	if err := validateTokens(tokens); err != nil {
+		return "", err
+	}
+
+	return strings.Join(tokens, tsqueryOr), nil
+}
+
+// validateTokens は lexical.Tokenizer の契約を実行時に検査する。
+//
+// 🔑 なぜ要るか。契約は doc コメントに書いてあるだけで、Go の型では表せない。
+// 分割器は差し替えられる前提で設計してある（要件定義 Q-2 が未決なので、
+// 形態素解析器に差し替える可能性が実際にある）から、新しい実装が契約を破る
+// 機会は将来に確実にある。
+//
+// 検査が無ければ症状は2通りで、どちらも静かである。空白を含むトークンは
+// DB の中で勝手に割れ、メタ文字を含むトークンは検索式を壊す。前者は
+// 「語彙スコアが少し変」、後者は「検索が失敗する」。前者に気づける人はいない。
+func validateTokens(tokens []string) error {
+	for i, token := range tokens {
+		if strings.ContainsFunc(token, unicode.IsSpace) {
+			return fmt.Errorf("%w: tokens[%d]=%q", errTokenHasWhitespace, i, token)
+		}
+
+		if strings.ContainsAny(token, tsqueryMetaCharacters) {
+			return fmt.Errorf("%w: tokens[%d]=%q", errTokenHasMetaCharacter, i, token)
+		}
+	}
+
+	return nil
 }
 
 // validateVector は embed.Embedder の契約（次元数と L2 正規化）を実行時に検査する。

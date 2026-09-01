@@ -14,7 +14,18 @@ import (
 //
 // 様式を変えたら上げる。過去のレポートを読み直すとき、どの様式で書かれたかが
 // 分からないと集計値の意味が確定しない。
-const ReportSchema = "nene-recall/eval-report/v1"
+//
+// v2 (2026-09-02) で変えたところ:
+//   - ranked_keys が文字列の配列から、スコア付きのオブジェクトの配列になった
+//   - summary に gold_length_recall と long_chunk_recall を足した
+//   - conditions に gold_length_threshold_runes と long_chunk_keys を足した
+//   - conditions に ranking（融合方式・ts_rank のフラグ・RRF の k）を足した
+//
+// 🔴 ranked_keys の名前を残して型だけ変えたのは、旧様式を読む道具が
+// 「フィールドが無い」で静かに素通りするのではなく、型の不一致で落ちるように
+// するためである。v1 のレポート（docs/benchmarks/data/2026-09-0[12]-*.json）は
+// 文字列の配列を持つ。
+const ReportSchema = "nene-recall/eval-report/v2"
 
 // Report は1回の計測の全記録。JSON でそのまま docs/benchmarks/data/ に残す。
 //
@@ -116,8 +127,36 @@ type Conditions struct {
 	WarmupRounds int `json:"warmup_rounds"`
 	// KValues は recall@k の k。
 	KValues []int `json:"k_values"`
+	// GoldLengthThresholdRunes は gold チャンクを長短に分ける閾値（文字数）。
+	//
+	// 🔑 評価セット自身が分割に使っている値と同じにしてある
+	// (testdata/eval/README.md)。長文チャンクへの依存度を Q-1 のレポートに
+	// 必ず併記せよ、という申し送りへの回答がこの内訳である。
+	GoldLengthThresholdRunes int `json:"gold_length_threshold_runes"`
+	// LongChunkKeys は名指しで追跡する長文 gold チャンク。
+	LongChunkKeys []string `json:"long_chunk_keys"`
+	// Ranking はストアが順位付けに使った条件。
+	//
+	// 🔴 alpha だけでは条件が決まらない。融合方式によって alpha の効き方は
+	// 変わり（順位融合では無視される）、語彙スコアの作り方も ts_rank の
+	// フラグで変わる。どれか1つでも欠けたレポートは、後から条件を特定できない
+	// ので正本になれない (docs/adr/0013-evaluation-harness-design.md)。
+	Ranking RankingSettings `json:"ranking"`
 	// PercentileMethod はパーセンタイルの定義。
 	PercentileMethod string `json:"percentile_method"`
+}
+
+// RankingSettings はストアが順位付けに使った条件の記録。
+//
+// 🔑 internal/eval はこの中身を解釈しない。具体ストアを知らない層なので
+// (ARC-001)、値は配線点 (cmd/eval) が集めてそのまま運ぶ。
+type RankingSettings struct {
+	// Fusion は融合方式の名前（例 "weighted-sum" / "rrf"）。
+	Fusion string `json:"fusion"`
+	// TsRankNormalization は ts_rank に渡した正規化フラグ。
+	TsRankNormalization int `json:"ts_rank_normalization"`
+	// RRFK は RRF の平滑化定数。
+	RRFK int `json:"rrf_k"`
 }
 
 // QueryReport はクエリ1件の生データ。
@@ -130,8 +169,13 @@ type QueryReport struct {
 	Tags []string `json:"tags"`
 	// Relevant は正解の eval_key。
 	Relevant []string `json:"relevant"`
-	// RankedKeys は返ってきた上位 limit 件の eval_key を順位順に並べたもの。
-	RankedKeys []string `json:"ranked_keys"`
+	// RankedKeys は返ってきた上位 limit 件を順位順に並べたもの。
+	//
+	// 🔴 eval_key だけでなく3つのスコアを併記する。外したときにベクトル側と
+	// 語彙側のどちらが原因かを per-query で追えることが、alpha (Q-3) と
+	// 語彙手法 (Q-1) の判断に要る。合成後の値だけでは切り分けられない。
+	// index.Result が2つのスコアを分けて持つ理由がここで効く。
+	RankedKeys []RankedEntry `json:"ranked_keys"`
 	// RelevantRanks は正解ごとの順位。圏外は null。
 	RelevantRanks []RelevantRank `json:"relevant_ranks"`
 	// Recall はこのクエリの recall@k。
@@ -140,6 +184,21 @@ type QueryReport struct {
 	ReciprocalRank float64 `json:"reciprocal_rank"`
 	// Latencies はラウンドごとの所要時間。
 	Latencies []RoundLatency `json:"latencies"`
+}
+
+// RankedEntry は返ってきた1件と、その順位を決めたスコア。
+//
+// スコアは float64 で持つ。index.Result は float32 だが、JSON に出す時点で
+// どちらにせよ十進表記になるので、桁を落とす理由が無い。
+type RankedEntry struct {
+	// Key は返ってきたチャンクの eval_key。
+	Key string `json:"eval_key"`
+	// Score は合成スコア。順位はこの値で決まっている。
+	Score float64 `json:"score"`
+	// VectorScore はベクトル側のスコア。
+	VectorScore float64 `json:"vector_score"`
+	// LexicalScore は語彙側のスコア。
+	LexicalScore float64 `json:"lexical_score"`
 }
 
 // RelevantRank は正解1件の順位。
@@ -187,6 +246,86 @@ type Summary struct {
 	// 🔑 総合値は数十クエリでは動きにくい。カテゴリ別の壊れ方のほうが
 	// 診断情報として濃いので、必ず併記する。
 	TagRecall []TagRecall `json:"tag_recall"`
+	// MicroRecall は正解チャンク単位（micro）の内訳。
+	//
+	// ⚠️ Recall（クエリ単位のマクロ平均）とは別物である。正解が1件のクエリと
+	// 8件のクエリを同じ重みで扱うマクロ平均に対し、こちらは正解チャンクを
+	// 1件ずつ数える。基準線が「131 / 236」と書いているのはこの値である。
+	MicroRecall MicroRecall `json:"micro_recall"`
+	// GoldLengthRecall は gold チャンクの長さ別の micro 内訳。
+	//
+	// 🔴 Q-1（tsvector か BM25 か）を歪めうる交絡要因への対処である。
+	// 評価セットには 1,136字の一覧表チャンクが5クエリの正解として繰り返し
+	// 現れており、BM25 は文書長で正規化し ts_rank は既定でしない。
+	// 併記が無いと、出た差が長文優遇によるものか検索品質によるものかを
+	// 切り分けられない (testdata/eval/README.md「既知の性質」)。
+	GoldLengthRecall []GoldLengthBucket `json:"gold_length_recall"`
+	// LongChunkRecall は名指しの長文 gold チャンクの追跡。
+	LongChunkRecall LongChunkRecall `json:"long_chunk_recall"`
+}
+
+// MicroRecall は正解チャンク単位の内訳。
+//
+// 🔑 分数のまま持つ。割った値だけを載せると、それが何件中の何件なのかが
+// 失われ、1件の増減がどれだけ効くのかを読む人が判断できない
+// (testdata/eval/README.md「数字の読み方」)。
+type MicroRecall struct {
+	// Hits は上位 Cutoff 件以内に入った正解チャンクの延べ数。
+	Hits int `json:"hits"`
+	// Total は正解チャンクの延べ数。
+	Total int `json:"total"`
+	// Cutoff は「上位何件以内」で数えたか。
+	Cutoff int `json:"cutoff"`
+	// Value は Hits / Total。
+	Value float64 `json:"value"`
+}
+
+// GoldLengthBucket は gold チャンクの長さで区切った micro 内訳の1区分。
+type GoldLengthBucket struct {
+	// Label は区分の名前（"<=520" など）。
+	Label string `json:"label"`
+	// MinRunes は区分の下限（含む）。
+	MinRunes int `json:"min_runes"`
+	// MaxRunes は区分の上限（含む）。上限が無い区分は 0。
+	MaxRunes int `json:"max_runes"`
+	// Hits は上位 Cutoff 件以内に入った延べ数。
+	Hits int `json:"hits"`
+	// Total はこの区分に属する正解チャンクの延べ数。
+	Total int `json:"total"`
+	// Value は Hits / Total。Total が 0 なら 0。
+	Value float64 `json:"value"`
+}
+
+// LongChunkRecall は名指しの長文 gold チャンクの追跡。
+//
+// 🔑 長さの区分だけでは足りない。評価セットの偏りは「長い chunk が多い」では
+// なく「特定の3つが繰り返し正解になっている」という形をしているので、
+// その3つを名指しで追う (testdata/eval/README.md「既知の性質」)。
+type LongChunkRecall struct {
+	// Keys はチャンクごとの内訳。
+	Keys []LongChunkKey `json:"keys"`
+	// Hits は3件ぶんを合わせた延べヒット数。
+	Hits int `json:"hits"`
+	// Total は3件ぶんを合わせた延べ正解数。
+	Total int `json:"total"`
+	// Value は Hits / Total。Total が 0 なら 0。
+	Value float64 `json:"value"`
+}
+
+// LongChunkKey は名指しの長文チャンク1件の内訳。
+type LongChunkKey struct {
+	// Key は eval_key。
+	Key string `json:"eval_key"`
+	// Runes はコーパス上の文字数。コーパスに無ければ 0。
+	//
+	// 🔴 0 は「評価セットを作り直してこのキーが消えた」ことの印である。
+	// 名指しの追跡は評価セットの中身に依存しているので、消えたことが
+	// レポートから読めなければならない。
+	Runes int `json:"runes"`
+	// Hits は上位 Cutoff 件以内に入った回数。
+	Hits int `json:"hits"`
+	// Total このキーが正解になっているクエリ数。
+	Total int `json:"total"`
 }
 
 // LatencySummary は2系統の所要時間の集計。

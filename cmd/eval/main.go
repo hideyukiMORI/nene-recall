@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	// 評価用 DB の作り直しにも pgx を使う。blank import なのは、
@@ -36,6 +37,7 @@ import (
 	"github.com/hideyukiMORI/nene-recall/internal/embed"
 	"github.com/hideyukiMORI/nene-recall/internal/embed/ollama"
 	"github.com/hideyukiMORI/nene-recall/internal/eval"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical/bigram"
 	"github.com/hideyukiMORI/nene-recall/internal/org"
 	"github.com/hideyukiMORI/nene-recall/internal/store/postgres"
 )
@@ -119,7 +121,13 @@ type flags struct {
 	// 🔴 org.ID を名乗らせない。org.NewID を通るまでは検証されていない int64 で
 	// あり、ここで org.ID にすると「検証していない値が org.ID を名乗る」経路が
 	// 1つ増える。生成は NewID / ParseID だけを通す (CNF-001 / CNF-002 / ADR 0003)。
-	rawOrg  int64
+	rawOrg int64
+	// fusion はベクトルと語彙のスコアをどうまとめるか。
+	//
+	// 🔴 生の文字列で持つ。postgres.ParseFusion を通るまでは検証されていない
+	// 入力であり、ここで postgres.Fusion にすると「検証していない値が
+	// Fusion を名乗る」経路が1つ増える。rawOrg と同じ扱いである。
+	fusion  string
 	gpuNote string
 }
 
@@ -185,6 +193,9 @@ func parseFlags() (flags, error) {
 	flag.IntVar(&opts.limit, "limit", eval.DefaultLimit, "1クエリあたりの取得件数")
 	flag.IntVar(&opts.rounds, "rounds", eval.DefaultRounds, "各クエリを繰り返す回数")
 	flag.Int64Var(&opts.rawOrg, "org", 1, "投入・検索に使う org_id")
+	flag.StringVar(&opts.fusion, "fusion", postgres.FusionWeightedSum.String(),
+		"合成方式: "+strings.Join(postgres.FusionNames(), " | ")+
+			"（rrf は alpha を無視する。既定は加重和）")
 	flag.StringVar(&opts.gpuNote, "gpu-note", "",
 		"GPU の占有状況などの自己申告。レポートにそのまま載る")
 	flag.Parse()
@@ -210,7 +221,14 @@ func (s session) run(ctx context.Context) error {
 		return err
 	}
 
-	target, err := s.openEvalStore(ctx, embedder)
+	// 🔴 融合方式はここで解釈する。未知の指定を既定へ黙って倒さないので、
+	// 綴り誤りは「既定で測った」結果として記録されずに止まる。
+	fusion, err := postgres.ParseFusion(s.opts.fusion)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errFlags, err)
+	}
+
+	target, err := s.openEvalStore(ctx, embedder, fusion)
 	if err != nil {
 		return err
 	}
@@ -274,7 +292,9 @@ func (s session) buildEmbedder() (*ollama.Client, error) {
 // 🔴 開発用の recall にもテスト用の recall_test にも相乗りしない。無関係な行が
 // 1件でも混ざれば、それは順位に入り込んで recall を汚染する。症状は
 // 「recall が少し低い」だけなので気づけない (ADR 0013)。
-func (s session) openEvalStore(ctx context.Context, embedder embed.Embedder) (evalStore, error) {
+func (s session) openEvalStore(
+	ctx context.Context, embedder embed.Embedder, fusion postgres.Fusion,
+) (evalStore, error) {
 	if err := recreateEvalDatabase(ctx); err != nil {
 		return evalStore{}, err
 	}
@@ -284,7 +304,7 @@ func (s session) openEvalStore(ctx context.Context, embedder embed.Embedder) (ev
 		return evalStore{}, fmt.Errorf("open evaluation database: %w", err)
 	}
 
-	store, err := postgres.New(db, embedder)
+	store, err := postgres.New(db, embedder, bigram.New(), fusion)
 	if err != nil {
 		return evalStore{}, errors.Join(fmt.Errorf("build store: %w", err), db.Close())
 	}
@@ -365,12 +385,30 @@ func (s session) measure(
 		Alpha:  s.alpha(),
 		Limit:  s.opts.limit,
 		Rounds: s.opts.rounds,
+		// 🔴 条件はストアに聞く。フラグの値をそのまま書き写すと、既定を
+		// 変えたときに「指定したつもりの条件」と「実際に使われた条件」が
+		// ずれる。レポートは後者でなければ意味が無い。
+		Ranking: rankingSettings(store),
 	})
 	if err != nil {
 		return eval.Measurement{}, fmt.Errorf("measure: %w", err)
 	}
 
 	return measurement, nil
+}
+
+// rankingSettings はストアが実際に使った条件をレポートの形にする。
+//
+// 🔑 internal/eval は具体ストアを知らない層なので (ARC-001)、写し替えは
+// 配線点の仕事である。同じ項目の構造体が2つあるのはその境界の対価である。
+func rankingSettings(store *postgres.Store) eval.RankingSettings {
+	settings := store.RankingSettings()
+
+	return eval.RankingSettings{
+		Fusion:              settings.Fusion,
+		TsRankNormalization: settings.TsRankNormalization,
+		RRFK:                settings.RRFK,
+	}
 }
 
 // alpha は -alpha が未指定なら設定の既定値を使う。
@@ -552,6 +590,17 @@ func (s session) logSummary(report eval.Report) {
 		slog.Float64("recall_at_5", eval.RecallValueAt(summary.Recall, 5)),
 		slog.Float64("recall_at_10", eval.RecallValueAt(summary.Recall, 10)),
 		slog.Float64("mrr", summary.MRR),
+		// 🔴 alpha を必ず出す。掃引しているときに、どの条件の数字を見ているのか
+		// 端末の出力だけで分からないと取り違える。
+		slog.Float64("alpha", float64(report.Conditions.Alpha)),
+		// 🔴 融合方式を必ず出す。alpha だけでは条件が決まらない
+		// （順位融合では alpha は無視される）。
+		slog.String("fusion", report.Conditions.Ranking.Fusion),
+		// micro は正解チャンク単位の内訳。クエリ単位のマクロ平均とは別物で、
+		// 「どのチャンクが拾えていないか」を見るにはこちらが要る。
+		slog.Float64("micro_recall", summary.MicroRecall.Value),
+		// 名指しの長文 gold がどれだけ拾えたか。Q-1 の交絡要因の見張りである。
+		slog.Float64("long_chunk_recall", summary.LongChunkRecall.Value),
 		slog.Float64("p95_with_embedding_ms", summary.Latency.WithEmbedding.P95MS),
 		slog.Float64("p95_without_embedding_ms", summary.Latency.WithoutEmbedding.P95MS),
 		slog.String("model_digest", report.Environment.ModelDigest),

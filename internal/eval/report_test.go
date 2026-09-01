@@ -60,16 +60,16 @@ func TestNewReportCarriesEnvironmentAndInputs(t *testing.T) {
 		PostgresVersion: "17.11", PgvectorVersion: "0.8.6", GPUNote: "占有ベンチではない",
 	}
 
-	inputs := eval.Inputs{
-		Corpus:  eval.FileInput{Path: "testdata/eval/corpus.jsonl", SHA256: "aa", Count: 3},
-		Queries: eval.FileInput{Path: "testdata/eval/queries.jsonl", SHA256: "bb", Count: 2},
-		Tags:    eval.FileInput{Path: "testdata/eval/tags.json", SHA256: "cc", Count: 2},
-	}
+	inputs := testReportInputs()
 
 	measurement := eval.Measurement{
 		Conditions: eval.Conditions{
 			OrgID: 1, Alpha: 0.7, AlphaNote: "not tuned", Limit: 10, Rounds: 5,
-			WarmupRounds: 1, KValues: eval.KValues(), PercentileMethod: eval.PercentileMethod,
+			WarmupRounds: 1, KValues: eval.KValues(),
+			GoldLengthThresholdRunes: eval.GoldLengthThreshold,
+			LongChunkKeys:            eval.LongGoldKeys(),
+			Ranking:                  testReportRanking(),
+			PercentileMethod:         eval.PercentileMethod,
 		},
 		Queries: nil,
 		Summary: eval.Summary{
@@ -78,7 +78,12 @@ func TestNewReportCarriesEnvironmentAndInputs(t *testing.T) {
 				WithEmbedding:    eval.LatencyStats{Samples: 0, MinMS: 0, P50MS: 0, P95MS: 0, MaxMS: 0},
 				WithoutEmbedding: eval.LatencyStats{Samples: 0, MinMS: 0, P50MS: 0, P95MS: 0, MaxMS: 0},
 			},
-			TagRecall: nil,
+			TagRecall:        nil,
+			MicroRecall:      eval.MicroRecall{Hits: 0, Total: 0, Cutoff: 10, Value: 0},
+			GoldLengthRecall: nil,
+			LongChunkRecall: eval.LongChunkRecall{
+				Keys: nil, Hits: 0, Total: 0, Value: 0,
+			},
 		},
 	}
 
@@ -122,32 +127,7 @@ func TestReportMarshalsToJSON(t *testing.T) {
 			Queries: eval.FileInput{Path: "q", SHA256: "2", Count: 1},
 			Tags:    eval.FileInput{Path: "t", SHA256: "3", Count: 1},
 		},
-		eval.Measurement{
-			Conditions: eval.Conditions{
-				OrgID: 1, Alpha: 0.7, AlphaNote: "not tuned", Limit: 10, Rounds: 5,
-				WarmupRounds: 1, KValues: eval.KValues(), PercentileMethod: eval.PercentileMethod,
-			},
-			Queries: []eval.QueryReport{{
-				QueryID: "q-1", Text: "問い", Tags: []string{"語彙一致"},
-				Relevant: []string{"doc-a#001"}, RankedKeys: []string{"doc-a#001"},
-				RelevantRanks:  []eval.RelevantRank{{Key: "doc-a#001", Rank: nil}},
-				Recall:         []eval.RecallAtK{{K: 10, Value: 1}},
-				ReciprocalRank: 1,
-				Latencies: []eval.RoundLatency{
-					{Round: 1, WithEmbeddingMS: 1.5, WithoutEmbeddingMS: 0.5},
-				},
-			}},
-			Summary: eval.Summary{
-				QueryCount: 1, Recall: []eval.RecallAtK{{K: 10, Value: 1}}, MRR: 1,
-				Latency: eval.LatencySummary{
-					WithEmbedding:    eval.LatencyStats{Samples: 1, MinMS: 1.5, P50MS: 1.5, P95MS: 1.5, MaxMS: 1.5},
-					WithoutEmbedding: eval.LatencyStats{Samples: 1, MinMS: 0.5, P50MS: 0.5, P95MS: 0.5, MaxMS: 0.5},
-				},
-				TagRecall: []eval.TagRecall{{
-					Tag: "語彙一致", QueryCount: 1, Recall: []eval.RecallAtK{{K: 10, Value: 1}},
-				}},
-			},
-		},
+		jsonTestMeasurement(),
 		time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
 	)
 
@@ -162,11 +142,82 @@ func TestReportMarshalsToJSON(t *testing.T) {
 		`"ollama_version"`, `"pgvector_version"`, `"sha256"`, `"alpha_note"`,
 		`"percentile_method"`, `"ranked_keys"`, `"relevant_ranks"`, `"rank":null`,
 		`"with_embedding_ms"`, `"without_embedding_ms"`, `"tag_recall"`, `"p95_ms"`,
+		// v2 で足した項目。名前が消えたら、コーディネーターの集計が静かに
+		// 欠けた数字を読むことになる。
+		`"vector_score"`, `"lexical_score"`, `"micro_recall"`,
+		`"gold_length_recall"`, `"long_chunk_recall"`,
+		`"gold_length_threshold_runes"`, `"long_chunk_keys"`,
+		// 条件の記録。alpha だけでは条件が決まらない。
+		`"ranking"`, `"fusion"`, `"ts_rank_normalization"`, `"rrf_k"`,
 	}
 
 	for _, key := range want {
 		if !strings.Contains(string(encoded), key) {
 			t.Errorf("JSON に %s が無い", key)
 		}
+	}
+}
+
+// jsonTestMeasurement は JSON 書き出しの検査に使う計測結果を返す。
+//
+// テスト本体から切り出してあるのは、レポートの様式が増えるたびにリテラルが
+// 伸びて、検査の本題（項目名が消えていないか）が読めなくなるためである。
+func jsonTestMeasurement() eval.Measurement {
+	return eval.Measurement{
+		Conditions: eval.Conditions{
+			OrgID: 1, Alpha: 0.7, AlphaNote: "not tuned", Limit: 10, Rounds: 5,
+			WarmupRounds: 1, KValues: eval.KValues(),
+			GoldLengthThresholdRunes: eval.GoldLengthThreshold,
+			LongChunkKeys:            eval.LongGoldKeys(),
+			Ranking:                  testReportRanking(),
+			PercentileMethod:         eval.PercentileMethod,
+		},
+		Queries: []eval.QueryReport{{
+			QueryID: "q-1", Text: "問い", Tags: []string{"語彙一致"},
+			Relevant: []string{"doc-a#001"},
+			RankedKeys: []eval.RankedEntry{{
+				Key: "doc-a#001", Score: 0.7, VectorScore: 1, LexicalScore: 0,
+			}},
+			RelevantRanks:  []eval.RelevantRank{{Key: "doc-a#001", Rank: nil}},
+			Recall:         []eval.RecallAtK{{K: 10, Value: 1}},
+			ReciprocalRank: 1,
+			Latencies: []eval.RoundLatency{
+				{Round: 1, WithEmbeddingMS: 1.5, WithoutEmbeddingMS: 0.5},
+			},
+		}},
+		Summary: eval.Summary{
+			QueryCount: 1, Recall: []eval.RecallAtK{{K: 10, Value: 1}}, MRR: 1,
+			Latency: eval.LatencySummary{
+				WithEmbedding:    eval.LatencyStats{Samples: 1, MinMS: 1.5, P50MS: 1.5, P95MS: 1.5, MaxMS: 1.5},
+				WithoutEmbedding: eval.LatencyStats{Samples: 1, MinMS: 0.5, P50MS: 0.5, P95MS: 0.5, MaxMS: 0.5},
+			},
+			TagRecall: []eval.TagRecall{{
+				Tag: "語彙一致", QueryCount: 1, Recall: []eval.RecallAtK{{K: 10, Value: 1}},
+			}},
+			MicroRecall: eval.MicroRecall{Hits: 1, Total: 1, Cutoff: 10, Value: 1},
+			GoldLengthRecall: []eval.GoldLengthBucket{{
+				Label: "<=520", MinRunes: 0, MaxRunes: eval.GoldLengthThreshold,
+				Hits: 1, Total: 1, Value: 1,
+			}},
+			LongChunkRecall: eval.LongChunkRecall{
+				Keys: nil, Hits: 0, Total: 0, Value: 0,
+			},
+		},
+	}
+}
+
+// testReportRanking はレポートの検査に使う順位付け条件の記録。
+//
+// internal/eval はこの中身を解釈しない。JSON に項目が出ることだけが要求である。
+func testReportRanking() eval.RankingSettings {
+	return eval.RankingSettings{Fusion: "weighted-sum", TsRankNormalization: 0, RRFK: 60}
+}
+
+// testReportInputs はレポートの検査に使う入力の同一性。
+func testReportInputs() eval.Inputs {
+	return eval.Inputs{
+		Corpus:  eval.FileInput{Path: "testdata/eval/corpus.jsonl", SHA256: "aa", Count: 3},
+		Queries: eval.FileInput{Path: "testdata/eval/queries.jsonl", SHA256: "bb", Count: 2},
+		Tags:    eval.FileInput{Path: "testdata/eval/tags.json", SHA256: "cc", Count: 2},
 	}
 }
