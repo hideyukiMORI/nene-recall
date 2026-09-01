@@ -11,6 +11,31 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+
+    # `make check` は Postgres の起動を前提にする（2026-09-01 施主承認）。
+    # ストアのテストはモック SQL ではなく実 Postgres に対して走るので、
+    # DB が無いと検査そのものが成立しない。
+    #
+    # 🔴 image・環境変数・ポートは compose.yaml と一致させること。
+    #    ローカルと CI が同じテストを同じ経路で走らせるための条件であり、
+    #    ここがずれた瞬間に「CI でしか落ちない」失敗が生まれる（QLT-003）。
+    #    テスト側の DSN も同じ値を定数で持っている
+    #    （internal/store/postgres の統合テスト）。
+    services:
+      db:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: recall
+          POSTGRES_PASSWORD: recall
+          POSTGRES_DB: recall
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U recall -d recall"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
