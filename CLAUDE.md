@@ -44,15 +44,19 @@ Go 製の自己ホスト型 検索・取得サービス。チャンクを取り�
 | フェーズ | 状態 |
 | --- | --- |
 | Phase 0 骨組み・設計判断 | ✅ 完了（2026-09-01） |
-| Phase 1 ローカル完結の検索 API | 🚧 着手（項目 1・3 完了） |
+| Phase 1 ローカル完結の検索 API | 🚧 着手（項目 1・2・3 完了。API が動く） |
 | Phase 2 Corpus 統合 | 🔲 未着手 |
 
-**動くもの:** `/healthz`・`/readyz`・全エンドポイントの `org_id` 検証・設定の検証・graceful shutdown。
-`internal/store/postgres` の投入・削除・ベクトル検索（実 Postgres に対する統合テスト付き）
+**動くもの:** **全エンドポイント**。`/v1/chunks` の投入・削除、`/v1/search` のベクトル検索が
+ローカルの bge-m3 と pgvector で実際に動く。`/healthz` は依存ごとの状態（`ok` / `degraded` / `down`）を返す。
 
-🔴 **動かないもの:** `/v1/search` と `/v1/chunks` 系は依然 `501 Not Implemented`。
-ストアは実装済みだが **`cmd` の配線と `httpapi` の差し替えがまだ**なので、HTTP からは届かない。
-ストアが動くこととエンドポイントが動くことは別である。
+実測（2026-09-01・手動 smoke）: ベンチ §5 の日本語4文を投入し
+「ベクトルの索引を張ると検索は速くなるか」で検索して**ベンチ §5 と同じ順位**を再現。
+`took_ms` 62（埋め込み往復を含む）。`vector_score` は独立計算したコサイン類似度と 4桁一致。
+
+🔴 **動かないもの:** 語彙検索（Phase 1 項目4・5）。`lexical_score` は常に 0 で、
+合成は `alpha*vector` に縮退している。`RECALL_EMBEDDER=voyage` と `RECALL_STORE=sqlite` は
+起動時に sentinel エラーで失敗する（設定としては valid だが未実装）。
 
 ### Phase 1 の残作業（着手順）
 
@@ -60,10 +64,11 @@ Go 製の自己ホスト型 検索・取得サービス。チャンクを取り�
    `pgx/v5/stdlib` 経由で `database/sql` として使う（ADR 0011）。DDL・自前の
    マイグレーションランナー・`vector(1024)` 列・Writer。**ベクトル索引は作っていない**
    （ADR 0007。`TestNoVectorIndexExists` が機械的に守っている）
-2. **Ollama 埋め込みクライアント** — `internal/embed/ollama.go`。`Embedder` を実装。
-   🔴 **バッチで送れる形にすること**。230字のチャンクで **1本ずつ 11.8 件/秒 → 32本まとめて 87.8 件/秒＝8倍**
-   （実測 `docs/benchmarks/2026-09-01-baseline.md`）。ナイーブに1チャンク1リクエストで書くと、
-   10万件の取り込みが 18分から**2時間21分**になる。32本前後で頭打ちなので、それ以上大きくしても無駄
+2. ~~**Ollama 埋め込みクライアント**~~ — ✅ 完了。**`internal/embed/ollama/`（サブパッケージ）**。
+   🔴 `internal/embed/ollama.go` ではない。契約パッケージ `internal/embed` は ARC-002 で
+   `net/http` と `time` を import できず、HTTP クライアントを置けないため（ADR 0012）。
+   バッチは `DefaultBatchSize = 32`（実測で 1本ずつの 8倍）。正規化・Kind の受け渡し・
+   失敗の分類（`embed.ErrProviderUnavailable`）を実装済み
 3. ~~**ベクトル検索**~~ — ✅ 完了。索引なしの全探索。演算子は **`<#>`（負の内積）** を採用した。
    前提（入力が常に正規化されている）は黙って置かず、`Embedder` の契約・`validateVector` の
    実行時検査・違反時の即エラー化の3つで支えている。詳細は `internal/store/postgres/searcher.go`
