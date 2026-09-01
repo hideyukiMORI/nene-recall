@@ -1,0 +1,272 @@
+# NeNe Recall の静的解析ゲート。
+#
+# 🔴 このファイルは docs/coding-rules.md の規則を機械化したものである。
+#    有効にする linter は必ず規則 ID を持つ。「便利そうだから」で足さない。
+#    逆に、規則があるのに linter が無い行は docs 側で planned と明記する。
+#
+# 🔴 baseline（new-from-rev / 既存違反の凍結）は使わない。QLT-002。
+#    違反ゼロの状態から始めたので、増やさないことだけを守ればよい。
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  # 既定を none にして、採用したものだけを明示的に挙げる。
+  # 「新しい linter が増えたら勝手に有効になる」状態を作らない。
+  default: none
+  enable:
+    # ── 正しさ ────────────────────────────────────
+    - errcheck        # GO-005 error を捨てない
+    - govet           # QLT-001
+    - staticcheck     # QLT-001
+    - ineffassign     # QLT-001
+    - unused          # QLT-001
+    - errorlint       # GO-005 %w と errors.Is/As
+    - err113          # GO-005 動的 error 禁止・sentinel を wrap する
+    - wrapcheck       # GO-005 境界を越える error は必ず包む
+    - nilerr          # GO-004 err != nil なのに nil を返さない
+    - nilnesserr      # GO-004
+    - nilnil          # GO-004 (nil, nil) を返さない
+    - forcetypeassert # GO-004 型アサーションの ok を捨てない
+    - bodyclose       # GO-015 HTTP レスポンスを閉じる
+    - sqlclosecheck   # GO-015 rows/stmt を閉じる
+    - rowserrcheck    # GO-015 rows.Err() を見る
+    - unqueryvet      # GO-015 SELECT * を禁止する
+    - noctx           # GO-013 ctx なしの HTTP/SQL 呼び出しを禁止
+    - contextcheck    # GO-013 ctx の断絶を検出
+    - containedctx    # GO-013 構造体に ctx を隠さない
+    - fatcontext      # GO-013 ループ内での ctx 汚染
+    - makezero        # 正しさ: 長さ付き make への append
+    - recvcheck       # 正しさ: ポインタ/値レシーバの混在
+    - reassign        # GO-007 パッケージ変数の再代入禁止
+    - copyloopvar     # 正しさ
+    - durationcheck   # 正しさ
+    - musttag         # 正しさ: JSON タグの付け忘れ
+    - protogetter
+    - exptostd
+    - usestdlibvars
+
+    # ── 閉じた選択肢・不変条件 ────────────────────
+    - exhaustive      # GO-002 iota 列挙の switch は網羅する
+    - gochecksumtype  # GO-002 封印インタフェースの type switch を網羅する
+    - exhaustruct_v5  # GO-003 指定した型は全フィールド明示で構築する
+
+    # ── 言語サブセット ────────────────────────────
+    - forbidigo       # GO-005/GO-009/GO-014 禁止構文
+    - depguard        # ARC-001/ARC-003 層の境界と禁止 import
+    - gomodguard_v2   # ARC-004 外部依存は許可制
+    - gochecknoglobals # GO-007 可変グローバル禁止
+    - gochecknoinits  # GO-007 init() 禁止
+    - nonamedreturns  # GO-004 名前付き戻り値の裸 return 禁止
+    - iotamixing      # GO-002 iota ブロックに定数を混ぜない
+    - predeclared     # 組み込み名の shadow 禁止
+    - unconvert       # 無意味な変換
+    - iface           # 無駄なインタフェース
+    - embeddedstructfieldcheck
+
+    # ── ログ・秘匿 ────────────────────────────────
+    - sloglint        # GO-014 ログの書き方を1つに固定する
+
+    # ── 複雑度 ────────────────────────────────────
+    - gocognit        # GO-011
+    - cyclop          # GO-011
+    - funlen          # GO-011
+    - nestif          # GO-011
+    - maintidx        # GO-011
+    - revive          # GO-008/GO-010/GO-011 命名・公開・引数数
+
+    # ── テスト ────────────────────────────────────
+    - testpackage     # QLT-006 テストは公開 API 越しに書く
+    - thelper         # QLT-006
+    - usetesting      # QLT-006 t.Setenv/t.TempDir を使う
+    - testableexamples
+
+    # ── 抑制の管理 ────────────────────────────────
+    - nolintlint      # QLT-006 理由なし・linter 名なしの //nolint を禁止
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+
+    exhaustive:
+      # 「default があるから網羅」とみなさない。列挙が増えたら気づけるようにする。
+      default-signifies-exhaustive: false
+
+    exhaustruct_v5:
+      # 全部の構造体に強制すると生産性が落ちるだけなので、
+      # 「部分構築が事故になる型」だけを指定する。増やすときは docs/coding-rules.md も直す。
+      enforce-patterns:
+        - 'github\.com/hideyukiMORI/nene-recall/internal/config\.Config'
+        - 'github\.com/hideyukiMORI/nene-recall/internal/index\.Query'
+      # 🔴 exhaustruct_v5 の enforce-patterns は「検査対象を絞る」設定ではない（実測）。
+      # 既定で全型が対象になるので、外部パッケージの型はここに1行ずつ足して外す。
+      # 「外部の型は全部除外」という包括ルールを書かないこと。都度判断が残るようにする。
+      ignore-patterns:
+        - '^net/http\.Server$'
+      # error 時の `return Config{}, err` は Go の定型なので許す。
+      # 縛りたいのは「一部のフィールドだけ埋めた構築」であって、ゼロ値の返却ではない。
+      allow-empty-returns: true
+
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: '^panic\('
+          msg: "GO-005: 期待される失敗は error で返す。panic は使わない。"
+        - pattern: '^recover\('
+          msg: "GO-005: recover による握り潰しを禁止する。"
+        - pattern: '^print(ln)?\('
+          msg: "GO-014: 組み込み print は使わない。log/slog を使う。"
+        - pattern: '^fmt\.Print.*$'
+          msg: "GO-014: 標準出力への直書きを禁止する。log/slog を使う。"
+        - pattern: '^log\.(Print|Fatal|Panic).*$'
+          msg: "GO-014: 標準 log パッケージを使わない。log/slog に統一する。"
+        - pattern: '^time\.Sleep$'
+          msg: "GO-013: sleep による同期を禁止する。ctx とチャネルで待つ。"
+
+    depguard:
+      rules:
+        # ARC-003: cgo と反射は全域で禁止（CLAUDE.md 地雷5・GO-009）
+        no-magic:
+          files: ["$all"]
+          deny:
+            - pkg: "C"
+              desc: "ARC-003: cgo を持ち込まない。クロスコンパイル可能という前提が壊れる。"
+            - pkg: "unsafe"
+              desc: "GO-009: unsafe を使わない。"
+            - pkg: "reflect"
+              desc: "GO-009: 反射を使わない。型で表現する。"
+        # ARC-001: ドメインと契約の層は純粋に保つ（時計・乱数・環境・I/O を持たない）
+        pure-core:
+          files:
+            - "**/internal/chunk/*.go"
+            - "**/internal/index/*.go"
+            - "**/internal/embed/*.go"
+          deny:
+            - pkg: "time"
+              desc: "ARC-002: 中核が時計を直接読まない。必要なら値として渡す。"
+            - pkg: "math/rand"
+              desc: "ARC-002: 中核が乱数を直接引かない。決定性を壊す。"
+            - pkg: "os"
+              desc: "ARC-002: 中核が環境・ファイルを触らない。"
+            - pkg: "net/http"
+              desc: "ARC-002: 中核が通信しない。"
+            - pkg: "database/sql"
+              desc: "ARC-002: 中核が SQL を知らない。"
+            - pkg: "log"
+              desc: "ARC-002: 中核がログを持たない。"
+            - pkg: "log/slog"
+              desc: "ARC-002: 中核がログを持たない。"
+        # ARC-005: プロセス環境（環境変数・標準入出力・シグナル）を触ってよいのは
+        # 設定パッケージと配線点だけ。他の層は値として受け取る。
+        # tools/ はサーバではなくリポジトリを検査する道具なので対象外とする。
+        env-is-read-in-config-only:
+          files:
+            - "!**/internal/config/*.go"
+            - "!**/cmd/**"
+            - "!**/tools/**"
+          deny:
+            - pkg: "os"
+              desc: "ARC-005: 環境・プロセスを直接触らない。config 経由で値を受け取る。"
+        # ARC-001: 具体ストアを知ってよいのは配線点（cmd）とストア自身だけ
+        store-is-wired-only-in-cmd:
+          files:
+            - "!**/cmd/**"
+            - "!**/internal/store/**"
+          deny:
+            - pkg: "github.com/hideyukiMORI/nene-recall/internal/store"
+              desc: "ARC-001: 具体ストアへの依存は cmd の配線点に閉じる。interface 越しに使う。"
+
+    gomodguard_v2:
+      blocked:
+        - module: github.com/lib/pq
+          recommendations: ["github.com/jackc/pgx/v5"]
+          reason: "非推奨。ドライバは pgx に統一する（CLAUDE.md 地雷5）。"
+        - module: github.com/mattn/go-sqlite3
+          recommendations: ["modernc.org/sqlite"]
+          reason: "cgo を要求する。純 Go に統一する（CLAUDE.md 地雷5）。"
+        - module: github.com/pkg/errors
+          recommendations: ["errors"]
+          reason: "標準 errors と %w に統一する。error の作り方を1つに保つ。"
+        - module: github.com/sirupsen/logrus
+          recommendations: ["log/slog"]
+          reason: "ログは log/slog に統一する（GO-014）。"
+        - module: github.com/stretchr/testify
+          reason: "アサーションの書き方を標準 testing の1つに保つ（QLT-006）。依存も増やさない。"
+
+    sloglint:
+      no-mixed-args: true
+      attr-only: true          # GO-014 slog.String 等の属性だけを使う。裸の可変長 kv を許さない
+      no-global: "all"         # GO-014 グローバルロガー禁止。ロガーは注入する
+      static-msg: true         # GO-014 メッセージは定数。可変部は属性へ
+      key-naming-case: snake
+      args-on-sep-lines: true
+
+    gocognit:
+      min-complexity: 10       # GO-011 KOT-013 と同値
+    cyclop:
+      max-complexity: 10
+      package-average: 5.0
+    funlen:
+      lines: 60
+      statements: 40
+      ignore-comments: true
+    nestif:
+      min-complexity: 4        # GO-011 ネスト深さ 3 まで
+
+    revive:
+      enable-all-rules: false
+      rules:
+        - name: exported                # GO-008 公開宣言には doc コメント
+        - name: argument-limit          # GO-011 引数は4つまで
+          arguments: [4]
+        - name: flag-parameter          # GO-011 bool 引数で分岐しない
+        - name: early-return
+        - name: unused-parameter
+        - name: unnecessary-stmt
+        - name: range-val-address
+        - name: identical-branches
+        - name: confusing-results
+        - name: bare-return
+        - name: errorf
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: indent-error-flow
+        - name: superfluous-else
+        - name: waitgroup-by-value
+        - name: unconditional-recursion
+        - name: string-of-int
+        - name: modifies-value-receiver
+
+    nolintlint:
+      require-explanation: true   # QLT-006 理由なしの抑制を禁止
+      require-specific: true      # linter 名を必ず書かせる
+      allow-unused: false
+
+    wrapcheck:
+      ignore-sigs:
+        - ".Errorf("
+        - "errors.New("
+        - "errors.Unwrap("
+        - "errors.Join("
+        - ".Wrap("
+        - ".WithMessage("
+
+  exclusions:
+    # 既定の除外プリセットを使わない。QLT-002。
+    # 「よくある誤検知」を無条件に消す設定は、規則を静かに緩めるのと同じ。
+    presets: []
+    generated: strict
+    rules: []
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/hideyukiMORI/nene-recall

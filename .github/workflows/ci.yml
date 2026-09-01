@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,20 +19,33 @@ jobs:
           go-version: '1.27'
           check-latest: true
 
-      - name: gofmt
+      # 🔴 CI 側で検査を組み直さない。ローカルと同じ `make check` を呼ぶ（QLT-003）。
+      #    ここに個別のステップを足したくなったら、まず Makefile 側に足すこと。
+      #    そうしないと「CI でしか落ちない」検査が生まれ、手元で再現できなくなる。
+      - name: check
+        run: make check
+
+      # 脆弱性検査だけは check から外してある。DB を都度取得するため
+      # ネットワークに依存し、手元の再現性が check と同じ水準にならないため。
+      - name: govulncheck
+        run: make vuln
+
+  # ゲートを弱める変更を目立たせる。落とすためではなく、レビューで見落とさないため。
+  gate-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: ゲート定義の変更を報告する
         run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "以下のファイルが gofmt されていない:"
-            echo "$unformatted"
-            exit 1
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then
+            echo "push ビルドのため差分比較を行わない"; exit 0
           fi
-
-      - name: go vet
-        run: go vet ./...
-
-      - name: test
-        run: go test ./... -race -cover
-
-      - name: build
-        run: go build ./...
+          changed=$(git diff --name-only "$base" HEAD -- .golangci.yml Makefile .github/workflows/ci.yml docs/coding-rules.md)
+          if [ -n "$changed" ]; then
+            echo "::notice::品質ゲートの定義が変更されている。QLT-005 によりレビューでの明示的な承認が要る:"
+            echo "$changed"
+          fi
