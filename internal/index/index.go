@@ -5,14 +5,16 @@ import (
 	"context"
 
 	"github.com/hideyukiMORI/nene-recall/internal/chunk"
+	"github.com/hideyukiMORI/nene-recall/internal/org"
 )
 
 // Query は1回の検索要求。
 //
 // OrgID は必須である。ゼロ値を「全 org」と解釈してはならない
-// (docs/adr/0003-org-id-is-mandatory.md)。
+// (docs/adr/0003-org-id-is-mandatory.md)。org.ID のゼロ値は無効値であり、
+// この構造体を作る側が org.ParseID / org.NewID を通していることを前提にする。
 type Query struct {
-	OrgID       int64
+	OrgID       org.ID
 	Text        string
 	Limit       int
 	Alpha       float32 // 合成の重み: alpha*vector + (1-alpha)*lexical
@@ -42,7 +44,7 @@ type Searcher interface {
 // 削除系が orgID を引数に取るのは、呼び出し側の渡し忘れをコンパイルエラーに
 // するため。分離条件をシグネチャに現す (ADR 0003)。
 type Writer interface {
-	Put(ctx context.Context, orgID int64, chunks []chunk.Chunk) ([]int64, error)
-	Delete(ctx context.Context, orgID int64, chunkID int64) error
-	DeleteBySource(ctx context.Context, orgID int64, sourceID int64) (int, error)
+	Put(ctx context.Context, orgID org.ID, chunks []chunk.Chunk) ([]int64, error)
+	Delete(ctx context.Context, orgID org.ID, chunkID int64) error
+	DeleteBySource(ctx context.Context, orgID org.ID, sourceID int64) (int, error)
 }

@@ -2,9 +2,24 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
+)
+
+// 設定の失敗は3種類しかない。呼び出し側が errors.Is で分岐できるよう sentinel を公開し、
+// どの環境変数が悪いのかは %w で包んだメッセージ側に持たせる。
+//
+// 動的 error（fmt.Errorf だけで作る error）を禁止しているのは、メッセージ文字列で
+// 分岐するコードが生まれるのを防ぐため (GO-005)。
+var (
+	// ErrMissingRequired は必須の環境変数が空だったことを表す。
+	ErrMissingRequired = errors.New("config: required value is missing")
+	// ErrInvalidValue は値の形式・範囲が不正だったことを表す。
+	ErrInvalidValue = errors.New("config: value is invalid")
+	// ErrUnknownOption は列挙にない選択肢が指定されたことを表す。
+	ErrUnknownOption = errors.New("config: unknown option")
 )
 
 // Store は永続化バックエンドの種類。
@@ -15,6 +30,19 @@ const (
 	StorePostgres Store = "postgres"
 	// StoreSQLite は SQLite + Go 側の総当たり内積。比較実測用に残している (ADR 0007)。
 	StoreSQLite Store = "sqlite"
+)
+
+// EmbedProvider は埋め込みプロバイダの種類。
+//
+// string のままにしないのは、選択肢が閉じていることを型で示し、switch の網羅を
+// exhaustive linter に見張らせるため (GO-002)。増やすときは ADR を1本立てる。
+type EmbedProvider string
+
+const (
+	// EmbedProviderOllama はローカル実行。既定 (ADR 0008)。
+	EmbedProviderOllama EmbedProvider = "ollama"
+	// EmbedProviderVoyage は外部 API。任意経路であり、選んだときだけ課金が発生する。
+	EmbedProviderVoyage EmbedProvider = "voyage"
 )
 
 // Config はサーバの設定。
@@ -32,11 +60,11 @@ type Config struct {
 	// DBPath は Store=sqlite のときのファイルパス。RECALL_DB_PATH、既定 "recall.db"。
 	DBPath string
 
-	// Embedder は埋め込みプロバイダ名。RECALL_EMBEDDER、既定 "ollama"。
+	// EmbedProvider は埋め込みプロバイダ。RECALL_EMBEDDER、既定 "ollama"。
 	//
 	// 既定がローカル実行なのは、ローカル利用が要件だから (ADR 0008)。
 	// voyage は任意経路であり、選んだときだけ API キーを要求する。
-	Embedder string
+	EmbedProvider EmbedProvider
 	// EmbedModel は埋め込みモデル名。RECALL_EMBED_MODEL、既定 "bge-m3"。
 	EmbedModel string
 	// EmbedDimensions は埋め込みの次元数。RECALL_EMBED_DIMENSIONS、既定 1024。
@@ -73,7 +101,7 @@ func Load() (Config, error) {
 		Store:           Store(env("RECALL_STORE", string(StorePostgres))),
 		DatabaseURL:     os.Getenv("RECALL_DATABASE_URL"),
 		DBPath:          env("RECALL_DB_PATH", "recall.db"),
-		Embedder:        env("RECALL_EMBEDDER", "ollama"),
+		EmbedProvider:   EmbedProvider(env("RECALL_EMBEDDER", string(EmbedProviderOllama))),
 		EmbedModel:      env("RECALL_EMBED_MODEL", "bge-m3"),
 		EmbedDimensions: 1024,
 		OllamaBaseURL:   env("RECALL_OLLAMA_URL", "http://localhost:11434"),
@@ -84,7 +112,7 @@ func Load() (Config, error) {
 	if v := os.Getenv("RECALL_EMBED_DIMENSIONS"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n <= 0 {
-			return Config{}, fmt.Errorf("config: RECALL_EMBED_DIMENSIONS must be a positive integer, got %q", v)
+			return Config{}, fmt.Errorf("%w: RECALL_EMBED_DIMENSIONS must be a positive integer, got %q", ErrInvalidValue, v)
 		}
 		c.EmbedDimensions = n
 	}
@@ -92,7 +120,7 @@ func Load() (Config, error) {
 	if v := os.Getenv("RECALL_DEFAULT_ALPHA"); v != "" {
 		f, err := strconv.ParseFloat(v, 32)
 		if err != nil || f < 0 || f > 1 {
-			return Config{}, fmt.Errorf("config: RECALL_DEFAULT_ALPHA must be within [0,1], got %q", v)
+			return Config{}, fmt.Errorf("%w: RECALL_DEFAULT_ALPHA must be within [0,1], got %q", ErrInvalidValue, v)
 		}
 		c.DefaultAlpha = float32(f)
 	}
@@ -104,31 +132,49 @@ func Load() (Config, error) {
 }
 
 func (c Config) validate() error {
+	if err := c.validateStore(); err != nil {
+		return err
+	}
+
+	return c.validateEmbedder()
+}
+
+// validateStore は永続化バックエンドの選択と、その選択が要求する値の有無を検証する。
+func (c Config) validateStore() error {
 	switch c.Store {
 	case StorePostgres:
 		if c.DatabaseURL == "" {
-			return fmt.Errorf("config: RECALL_DATABASE_URL is required when RECALL_STORE=postgres")
+			return fmt.Errorf("%w: RECALL_DATABASE_URL is required when RECALL_STORE=postgres", ErrMissingRequired)
 		}
 	case StoreSQLite:
 		if c.DBPath == "" {
-			return fmt.Errorf("config: RECALL_DB_PATH is required when RECALL_STORE=sqlite")
+			return fmt.Errorf("%w: RECALL_DB_PATH is required when RECALL_STORE=sqlite", ErrMissingRequired)
 		}
 	default:
-		return fmt.Errorf("config: RECALL_STORE must be %q or %q, got %q", StorePostgres, StoreSQLite, c.Store)
+		return fmt.Errorf("%w: RECALL_STORE must be %q or %q, got %q",
+			ErrUnknownOption, StorePostgres, StoreSQLite, c.Store)
 	}
 
-	switch c.Embedder {
-	case "ollama":
+	return nil
+}
+
+// validateEmbedder は埋め込みプロバイダの選択と、その選択が要求する値の有無を検証する。
+//
+// API キーを voyage のときだけ要求するのは、既定構成（ローカル）に外部サービスの
+// 前提を持ち込まないため (ADR 0008)。
+func (c Config) validateEmbedder() error {
+	switch c.EmbedProvider {
+	case EmbedProviderOllama:
 		if c.OllamaBaseURL == "" {
-			return fmt.Errorf("config: RECALL_OLLAMA_URL is required when RECALL_EMBEDDER=ollama")
+			return fmt.Errorf("%w: RECALL_OLLAMA_URL is required when RECALL_EMBEDDER=ollama", ErrMissingRequired)
 		}
-	case "voyage":
-		// voyage は任意経路。選んだときだけ課金が発生するので、キーもここでだけ要求する。
+	case EmbedProviderVoyage:
 		if c.VoyageAPIKey == "" {
-			return fmt.Errorf("config: VOYAGE_API_KEY is required when RECALL_EMBEDDER=voyage")
+			return fmt.Errorf("%w: VOYAGE_API_KEY is required when RECALL_EMBEDDER=voyage", ErrMissingRequired)
 		}
 	default:
-		return fmt.Errorf("config: RECALL_EMBEDDER must be \"ollama\" or \"voyage\", got %q", c.Embedder)
+		return fmt.Errorf("%w: RECALL_EMBEDDER must be %q or %q, got %q",
+			ErrUnknownOption, EmbedProviderOllama, EmbedProviderVoyage, c.EmbedProvider)
 	}
 
 	return nil
