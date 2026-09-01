@@ -27,3 +27,16 @@ var ErrEmbedderMismatch = errors.New("index: stored vectors were produced by a d
 // 「未指定の org」を index の層まで通す経路を作らないためである
 // (docs/adr/0003-org-id-is-mandatory.md)。
 var ErrInvalidQuery = errors.New("index: invalid search query")
+
+// ErrTokenizerMismatch は、保存済みのトークン列の分割規則と現在の設定が
+// 一致しないことを表す。
+//
+// 🔴 分割規則が違えば、同じ語を書いたはずのチャンクとクエリが別のトークンに
+// なる。症状は「語彙スコアが常に 0」＝検索結果が少し悪いだけで、
+// エラーにならない。ErrEmbedderMismatch とまったく同じ形の静かな破損であり、
+// 単一の分割器で開発している限り一切表面化しない。必ずエラーにする。
+//
+// 契約パッケージに置く理由も ErrEmbedderMismatch と同じで、検知するのは
+// ストア、503 に写すのは HTTP 層であり、両者が共通して依存できる場所が
+// ここしかないためである (ARC-001)。
+var ErrTokenizerMismatch = errors.New("index: stored lexemes were produced by a different tokenizer")

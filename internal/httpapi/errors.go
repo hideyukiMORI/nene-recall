@@ -48,6 +48,7 @@ type failureMapping struct {
 // | ----------------------------- | ------ | --------------------- |
 // | index.ErrInvalidQuery         | 400    | invalid_query         |
 // | index.ErrEmbedderMismatch     | 503    | embedder_mismatch     |
+// | index.ErrTokenizerMismatch    | 503    | tokenizer_mismatch    |
 // | embed.ErrProviderUnavailable  | 503    | embedder_unavailable  |
 // | それ以外                        | 500    | internal              |
 //
@@ -67,6 +68,15 @@ func failureMappings() []failureMapping {
 			status:   http.StatusServiceUnavailable,
 			code:     "embedder_mismatch",
 			message:  "stored vectors were produced by a different embedding model",
+		},
+		{
+			// 保存済みのトークン列と現在の分割規則が違う。取り込み直しが要る
+			// 状態で、🔴 「語彙スコアが 0 になるだけ」で隠さない。埋め込みの
+			// 不一致と同じ形の静かな破損である (index.ErrTokenizerMismatch の doc)。
+			sentinel: index.ErrTokenizerMismatch,
+			status:   http.StatusServiceUnavailable,
+			code:     "tokenizer_mismatch",
+			message:  "stored lexemes were produced by a different tokenizer",
 		},
 		{
 			// Ollama が落ちている・モデル未取得・応答が壊れている。

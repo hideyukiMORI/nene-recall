@@ -20,6 +20,7 @@ import (
 	"github.com/hideyukiMORI/nene-recall/internal/embed"
 	"github.com/hideyukiMORI/nene-recall/internal/embed/ollama"
 	"github.com/hideyukiMORI/nene-recall/internal/httpapi"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical/bigram"
 	"github.com/hideyukiMORI/nene-recall/internal/store/postgres"
 )
 
@@ -172,7 +173,7 @@ func openPostgres(ctx context.Context, cfg config.Config, embedder embed.Embedde
 
 	// ここで Embedder の次元と vector(1024) 列の突き合わせが効く。
 	// 食い違っていれば「起動はするが取り込みが全部落ちる」前に落ちる。
-	store, err := postgres.New(db, embedder)
+	store, err := postgres.New(db, embedder, bigram.New())
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("build store: %w", err), db.Close())
 	}

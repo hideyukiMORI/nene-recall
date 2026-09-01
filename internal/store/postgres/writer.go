@@ -22,7 +22,19 @@ var _ index.Writer = (*Store)(nil)
 type pendingWrite struct {
 	orgID   org.ID
 	chunks  []chunk.Chunk
-	vectors []string
+	encoded []encodedChunk
+}
+
+// encodedChunk は1チャンクぶんの、Postgres へ渡す形に直した派生値。
+//
+// ベクトルとトークン列を1つの値にまとめてあるのは、両者がチャンクと同じ添字で
+// 対応しており、別々のスライスで持ち回るとずれる余地が生まれるためである。
+type encodedChunk struct {
+	// vector は pgvector のテキスト表記。
+	vector string
+	// lexemeText は Tokenizer の出力を空白区切りで並べたもの。
+	// DB 側の生成列がこれを tsvector に直す。
+	lexemeText string
 }
 
 // insertChunkSQL は1行を投入して採番された id を返す。
@@ -33,10 +45,14 @@ type pendingWrite struct {
 // 伴わなければ主張しない」と定めており、利得を測れないうちに1行ずつという
 // 読みやすい形を捨てない。ベンチで挿入が支配項だと分かったら、そのときの数字を
 // 根拠に変える。
+//
+// 🔴 lexemes 列は書かない。lexeme_text からの生成列であり、DB が導出する。
+// アプリケーションが両方を書く形にすると、片方だけ更新された行が作れてしまう。
 const insertChunkSQL = `INSERT INTO chunks (
 	org_id, document_id, source_id, chunk_index, content,
-	page_number, section_label, embedder_id, embedding
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::vector)
+	page_number, section_label, embedder_id, embedding,
+	lexeme_text, tokenizer_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::vector, $10, $11)
 RETURNING id`
 
 // Put はチャンクを投入し、採番された id を入力と同じ順で返す。
@@ -53,12 +69,12 @@ func (s *Store) Put(ctx context.Context, orgID org.ID, chunks []chunk.Chunk) ([]
 	// 🔴 埋め込みの生成はトランザクションを開ける前に済ませる。
 	// 数十秒かかりうる外部 I/O をトランザクションの中に置くと、その間ずっと
 	// 接続と行ロックを占有することになる。
-	vectors, err := s.encodeContents(ctx, chunks)
+	encoded, err := s.encodeContents(ctx, chunks)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.insertChunks(ctx, pendingWrite{orgID: orgID, chunks: chunks, vectors: vectors})
+	return s.insertChunks(ctx, pendingWrite{orgID: orgID, chunks: chunks, encoded: encoded})
 }
 
 // validateOrgID は分離条件が指定されていることを境界で確かめる。
@@ -112,8 +128,13 @@ func validateChunks(orgID org.ID, chunks []chunk.Chunk) error {
 	return nil
 }
 
-// encodeContents は本文をまとめて埋め込み、pgvector のテキスト表記に変換する。
-func (s *Store) encodeContents(ctx context.Context, chunks []chunk.Chunk) ([]string, error) {
+// encodeContents は本文をまとめて埋め込み、Postgres へ渡す形に変換する。
+//
+// 🔴 分割（Tokenize）は埋め込みと同じ本文に対して、同じ場所で行う。
+// 別の経路から別の文字列を分割する形にすると、ベクトルとトークン列が
+// 違う本文を指す行を作れてしまい、その行は検索でどちらのスコアが正しいのか
+// 分からなくなる。
+func (s *Store) encodeContents(ctx context.Context, chunks []chunk.Chunk) ([]encodedChunk, error) {
 	texts := make([]string, 0, len(chunks))
 	for _, c := range chunks {
 		texts = append(texts, c.Content)
@@ -139,7 +160,7 @@ func (s *Store) encodeContents(ctx context.Context, chunks []chunk.Chunk) ([]str
 			errWrite, len(vectors), len(chunks))
 	}
 
-	encoded := make([]string, 0, len(vectors))
+	encoded := make([]encodedChunk, 0, len(vectors))
 
 	for i, v := range vectors {
 		// 契約違反をここで止める。通してしまうと <#> の順位が静かに狂う。
@@ -147,7 +168,14 @@ func (s *Store) encodeContents(ctx context.Context, chunks []chunk.Chunk) ([]str
 			return nil, fmt.Errorf("%w: chunks[%d]", err, i)
 		}
 
-		encoded = append(encoded, encodeVector(v))
+		// Kind に相当する使い分けは分割には無い。取り込みと検索で同じ関数を
+		// 通すことがそのまま契約である（lexical.Tokenizer の doc を参照）。
+		lexemeText, err := encodeLexemeText(s.tokenizer.Tokenize(chunks[i].Content))
+		if err != nil {
+			return nil, fmt.Errorf("%w: chunks[%d]", err, i)
+		}
+
+		encoded = append(encoded, encodedChunk{vector: encodeVector(v), lexemeText: lexemeText})
 	}
 
 	return encoded, nil
@@ -188,7 +216,8 @@ func (s *Store) insertChunks(ctx context.Context, w pendingWrite) ([]int64, erro
 func (s *Store) insertWithinTx(ctx context.Context, tx *sql.Tx, w pendingWrite) ([]int64, error) {
 	// 🔴 書き込みの前に確かめる。別モデルのベクトルを混ぜると、次元が同じでも
 	// 比較できないベクトルが同じ列に並び、以後の検索が黙って壊れる（ADR 0005）。
-	if err := s.assertSameEmbedder(ctx, tx); err != nil {
+	// 分割規則が違うトークン列を混ぜたときも同じ形で壊れる。
+	if err := s.assertSameEmbedderAndTokenizer(ctx, tx); err != nil {
 		return nil, err
 	}
 
@@ -199,7 +228,8 @@ func (s *Store) insertWithinTx(ctx context.Context, tx *sql.Tx, w pendingWrite) 
 
 		err := tx.QueryRowContext(ctx, insertChunkSQL,
 			w.orgID.Int64(), c.DocumentID, c.SourceID, c.ChunkIndex, c.Content,
-			c.PageNumber, c.SectionLabel, s.embedderID, w.vectors[i],
+			c.PageNumber, c.SectionLabel, s.embedderID, w.encoded[i].vector,
+			w.encoded[i].lexemeText, s.tokenizerID,
 		).Scan(&id)
 		if err != nil {
 			return nil, fmt.Errorf("%w: chunks[%d]: %s", errWrite, i, err.Error())

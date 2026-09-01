@@ -1,6 +1,7 @@
 package postgres_test
 
 import (
+	"errors"
 	"math"
 	"strconv"
 	"strings"
@@ -79,6 +80,89 @@ func TestEncodeInt64ArrayRendersPostgresArray(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if got := postgres.EncodeInt64Array(c.in); got != c.want {
 				t.Errorf("EncodeInt64Array(%v) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// TestEncodeLexemeTextJoinsWithSpaces はトークン列が空白区切りになることを見る。
+func TestEncodeLexemeTextJoinsWithSpaces(t *testing.T) {
+	t.Parallel()
+
+	got, err := postgres.EncodeLexemeText([]string{"検索", "索対", "recall_store"})
+	if err != nil {
+		t.Fatalf("EncodeLexemeText: %v", err)
+	}
+
+	if want := "検索 索対 recall_store"; got != want {
+		t.Errorf("EncodeLexemeText = %q, want %q", got, want)
+	}
+}
+
+// TestEncodeTsQueryJoinsWithOr はトークン列が OR で繋がることを見る。
+//
+// 🔴 AND にしないこと。長いクエリで1語でも本文に無ければスコアが 0 になり、
+// 「どれだけ重なったか」という段階的な情報が失われる。合成が欲しいのは
+// 連続値であって真偽値ではない。
+func TestEncodeTsQueryJoinsWithOr(t *testing.T) {
+	t.Parallel()
+
+	got, err := postgres.EncodeTsQuery([]string{"pgvector", "0.8.6"})
+	if err != nil {
+		t.Fatalf("EncodeTsQuery: %v", err)
+	}
+
+	if want := "pgvector | 0.8.6"; got != want {
+		t.Errorf("EncodeTsQuery = %q, want %q", got, want)
+	}
+}
+
+// TestEncodeEmptyTokensIsNotAnError は空のトークン列が正常な入力であることを見る。
+//
+// 絵文字だけのクエリのように、分割できる語が1つも無い入力はありうる。
+// エラーにすると検索そのものが失敗するが、正しい振る舞いは「語彙スコア 0 に
+// 落ちて合成が alpha*vector に縮退する」である。
+func TestEncodeEmptyTokensIsNotAnError(t *testing.T) {
+	t.Parallel()
+
+	lexemeText, err := postgres.EncodeLexemeText([]string{})
+	if err != nil || lexemeText != "" {
+		t.Errorf("EncodeLexemeText([]) = %q, %v", lexemeText, err)
+	}
+
+	expression, err := postgres.EncodeTsQuery([]string{})
+	if err != nil || expression != "" {
+		t.Errorf("EncodeTsQuery([]) = %q, %v", expression, err)
+	}
+}
+
+// TestEncodeRejectsTokensThatBreakTheContract は契約違反を符号化の時点で落とすことを見る。
+func TestEncodeRejectsTokensThatBreakTheContract(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		tokens []string
+		want   error
+	}{
+		{name: "空白", tokens: []string{"a b"}, want: postgres.ErrTokenHasWhitespace()},
+		{name: "全角空白", tokens: []string{"a　b"}, want: postgres.ErrTokenHasWhitespace()},
+		{name: "OR 演算子", tokens: []string{"a|b"}, want: postgres.ErrTokenHasMetaCharacter()},
+		{name: "否定", tokens: []string{"!a"}, want: postgres.ErrTokenHasMetaCharacter()},
+		{name: "重み指定", tokens: []string{"a:b"}, want: postgres.ErrTokenHasMetaCharacter()},
+		{name: "引用符", tokens: []string{"a'b"}, want: postgres.ErrTokenHasMetaCharacter()},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := postgres.EncodeTsQuery(tc.tokens); !errors.Is(err, tc.want) {
+				t.Errorf("EncodeTsQuery(%v) の err = %v, want %v", tc.tokens, err, tc.want)
+			}
+
+			if _, err := postgres.EncodeLexemeText(tc.tokens); !errors.Is(err, tc.want) {
+				t.Errorf("EncodeLexemeText(%v) の err = %v, want %v", tc.tokens, err, tc.want)
 			}
 		})
 	}

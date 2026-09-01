@@ -51,3 +51,21 @@ func ErrChunkIDNotAccepted() error { return errChunkIDNotAccepted }
 
 // ErrOrgRequired は errOrgRequired をテストへ公開する。
 func ErrOrgRequired() error { return errOrgRequired }
+
+// ErrTokenizerID は errTokenizerID をテストへ公開する。
+func ErrTokenizerID() error { return errTokenizerID }
+
+// ErrTokenInvalid は errTokenInvalid をテストへ公開する。
+func ErrTokenInvalid() error { return errTokenInvalid }
+
+// ErrTokenHasWhitespace は errTokenHasWhitespace をテストへ公開する。
+func ErrTokenHasWhitespace() error { return errTokenHasWhitespace }
+
+// ErrTokenHasMetaCharacter は errTokenHasMetaCharacter をテストへ公開する。
+func ErrTokenHasMetaCharacter() error { return errTokenHasMetaCharacter }
+
+// EncodeLexemeText は encodeLexemeText をテストへ公開する。
+func EncodeLexemeText(tokens []string) (string, error) { return encodeLexemeText(tokens) }
+
+// EncodeTsQuery は encodeTsQuery をテストへ公開する。
+func EncodeTsQuery(tokens []string) (string, error) { return encodeTsQuery(tokens) }

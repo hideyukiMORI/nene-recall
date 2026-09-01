@@ -36,6 +36,7 @@ import (
 	"github.com/hideyukiMORI/nene-recall/internal/embed"
 	"github.com/hideyukiMORI/nene-recall/internal/embed/ollama"
 	"github.com/hideyukiMORI/nene-recall/internal/eval"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical/bigram"
 	"github.com/hideyukiMORI/nene-recall/internal/org"
 	"github.com/hideyukiMORI/nene-recall/internal/store/postgres"
 )
@@ -284,7 +285,7 @@ func (s session) openEvalStore(ctx context.Context, embedder embed.Embedder) (ev
 		return evalStore{}, fmt.Errorf("open evaluation database: %w", err)
 	}
 
-	store, err := postgres.New(db, embedder)
+	store, err := postgres.New(db, embedder, bigram.New())
 	if err != nil {
 		return evalStore{}, errors.Join(fmt.Errorf("build store: %w", err), db.Close())
 	}

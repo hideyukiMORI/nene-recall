@@ -8,6 +8,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/hideyukiMORI/nene-recall/internal/embed"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical"
 	"github.com/hideyukiMORI/nene-recall/internal/store/postgres"
 )
 
@@ -50,6 +51,16 @@ type testStore struct {
 func newTestStore(t *testing.T, e embed.Embedder) *testStore {
 	t.Helper()
 
+	return newTestStoreWith(t, e, newFakeTokenizer("fake-tokenizer:1"))
+}
+
+// newTestStoreWith は分割器も指定してテスト用ストアを作る。
+//
+// 分割器を指定したいのは、tokenizer_id の不一致検知と、実物の分割器を使う
+// 往復同一性テストだけである。それ以外は newTestStore の既定でよい。
+func newTestStoreWith(t *testing.T, e embed.Embedder, tok lexical.Tokenizer) *testStore {
+	t.Helper()
+
 	recreateTestDatabase(t)
 
 	db, err := postgres.Open(t.Context(), testDSN)
@@ -57,7 +68,7 @@ func newTestStore(t *testing.T, e embed.Embedder) *testStore {
 		t.Fatalf("テスト用 DB へ接続できない: %v", err)
 	}
 
-	store, err := postgres.New(db, e)
+	store, err := postgres.New(db, e, tok)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -116,12 +127,19 @@ func recreateTestDatabase(t *testing.T) {
 func attachStore(t *testing.T, e embed.Embedder) *postgres.Store {
 	t.Helper()
 
+	return attachStoreWith(t, e, newFakeTokenizer("fake-tokenizer:1"))
+}
+
+// attachStoreWith は分割器も指定して、既にあるテスト用 DB へ別の Store を繋ぐ。
+func attachStoreWith(t *testing.T, e embed.Embedder, tok lexical.Tokenizer) *postgres.Store {
+	t.Helper()
+
 	db, err := postgres.Open(t.Context(), testDSN)
 	if err != nil {
 		t.Fatalf("テスト用 DB へ接続できない: %v", err)
 	}
 
-	store, err := postgres.New(db, e)
+	store, err := postgres.New(db, e, tok)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

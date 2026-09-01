@@ -91,7 +91,7 @@ func (s *Store) Search(ctx context.Context, q index.Query) ([]index.Result, erro
 // 項目8 の SQLite を含む）が計測の都合に付き合わされる。Ping を
 // embed.Embedder の契約に入れなかったのと同じ判断軸である。
 //
-// 🔴 SQL も事前検査も Search と共有する。特に assertSameEmbedder をここでも
+// 🔴 SQL も事前検査も Search と共有する。特に assertSameEmbedderAndTokenizer をここでも
 // 通すのは、省くと系統2 が SELECT を1本ぶんだけ軽くなり、2系統の差が
 // 「埋め込み往復ぶん」でなくなるためである。計測対象と本番経路が乖離したら
 // 計測の意味が無い。
@@ -113,7 +113,7 @@ func (s *Store) SearchVector(
 
 // prepareSearch は DB へ本題を問い合わせる前の共通の検査。
 //
-// 🔴 検索の前にも埋め込みモデルの一致を確かめる。ここで
+// 🔴 検索の前にも埋め込みモデルと分割規則の一致を確かめる。ここで
 // WHERE embedder_id = $current と黙って絞り込む実装にしないこと。
 // 不一致の行が「検索に出てこないだけ」になり、ADR 0005 が警告する静かな破損の
 // 変種になる。必ずエラーとして表面化させる。
@@ -122,7 +122,7 @@ func (s *Store) prepareSearch(ctx context.Context, q index.Query) error {
 		return err
 	}
 
-	return s.assertSameEmbedder(ctx, s.db)
+	return s.assertSameEmbedderAndTokenizer(ctx, s.db)
 }
 
 // validateQuery は DB にも埋め込みにも触れずに分かる誤りを先に落とす。
