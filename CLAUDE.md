@@ -76,11 +76,15 @@ Go 製の自己ホスト型 検索・取得サービス。チャンクを取り�
 ```bash
 docker compose up -d      # PostgreSQL + pgvector (pgvector/pgvector:pg17)
 ollama pull bge-m3        # Windows 側で実行
-make test                 # go test ./... -race -cover
-make vet
-make build                # bin/recall
+
+make check                # 🔴 提出前に必ず通す唯一のゲート。CI もこれを呼ぶ
 make run                  # .env が要る
 ```
+
+`make check` の中身は fmt-check → vet → lint → conformance → test → cover-check →
+tidy-check → build。個別に走らせたいときだけ `make lint` `make test` 等を使う。
+**CI 側にしか無い検査は作らない**（QLT-003）。初回は `make tools` が
+`golangci-lint`（バージョン固定）を導入する。
 
 Go は `/usr/local/go/bin`（1.27.0・公式 tarball から導入）。
 `/etc/profile.d/go.sh` と各 `.bashrc` で PATH に入っている。
@@ -98,8 +102,15 @@ Corpus では分離条件が SQL の WHERE 句に埋まっていた（`PdoChunkS
 ここを緩めると、あるテナントの検索が別テナントの文書を返す。
 そして**単一テナントで開発・テストしている限り、この欠陥は一切症状を出さない**。
 
-`internal/httpapi/server_test.go` の `TestOrgIDIsMandatory` が10ケースで縛っている。
-このテストを緩める変更は入れないこと。正本は ADR 0003。
+**2026-09-01 から、この規約はテストだけでなく型と検査器が守っている**（ADR 0010）:
+
+- `org.ID` 型（`internal/org`）。生成経路は `org.NewID` / `org.ParseID` の2つだけ
+- `CNF-001` が `org.ID(1)` のような**直接変換を禁止**する。
+  Go には private constructor が無いので、この禁止は型ではなく `tools/conformance` が担う
+- `CNF-002` が `org_id` を名乗るフィールド・引数の型が `int64` に退化していないか全ファイルで見る
+- `TestOrgIDIsMandatory` が10ケースで HTTP 層を縛る（**ケースを減らす変更を入れないこと**）
+
+正本は ADR 0003。機械強制の設計は ADR 0010。
 
 ### 2. 埋め込みモデルを変えたら保存済みベクトルは無効
 
@@ -178,8 +189,14 @@ ADR 0007 の要点は「pgvector を選んだこと」ではなく「**測って
 - **ライセンス**: MIT（フリート標準）
 - **費用**: **既定構成に有料サービス・有料ツールを持ち込まない。**
   外部 API を既定にする変更は ADR で明示的に判断すること
-- **公開リポの docs**: 要件定義・ADR・OpenAPI・ベンチマークのみを正とする。
+- **公開リポの docs**: 要件定義・ADR・OpenAPI・ベンチマーク・**コーディング規約**のみを正とする。
   運用ログ・日報の類はここに置かない
+- 🔴 **厳格性は文章ではなく機械で強制する**（ADR 0010）。規則の正本は
+  [`docs/coding-rules.md`](docs/coding-rules.md)。**すべての規則が active / planned / 不採用の
+  状態を持つ**ので、planned を active と書き換えないこと。未実装の強制を実装済みに見せると、
+  規約全体が信用できなくなる
+- 🔴 **ゲートを弱める変更は ADR を要する**（QLT-005）。閾値の緩和・除外の追加・linter の削除が対象。
+  `//nolint` は linter 名と理由の両方が必須（理由が無いと落ちる）
 - **設計判断は必ず ADR にする**。`docs/adr/0000-template.md` を複製して書く。
   **「なぜそうしなかったか」（却下した選択肢とその理由）を必ず残す。**
   supersede するときは、旧 ADR のどの部分が今も有効かを明記すること

@@ -73,6 +73,7 @@ Recall が置き換える相手は「まだ RAG になっていないもの」�
 | **pgvector。索引なしで始め、実測してから HNSW** | 索引を最初から入れると「なぜ入れたか」を数字で語れなくなる（[ADR 0007](docs/adr/0007-pgvector-over-brute-force.md)） |
 | **埋め込みはローカル既定（Ollama + bge-m3）** | ローカル利用が要件。RTX 3090 が使える。費用0円（[ADR 0008](docs/adr/0008-local-embedding-by-default.md)） |
 | **検索品質の評価を Phase 1 の必須要件に** | ベクトル DB 選定はもう差別化にならない。測ることが差別化（[ADR 0009](docs/adr/0009-retrieval-evaluation-is-in-scope.md)） |
+| **厳格性は文章でなく機械で強制する** | Go はゼロ値・不変性・網羅性を言語で縛れない。落ちる仕組みにする（[ADR 0010](docs/adr/0010-strictness-is-mechanically-enforced.md)） |
 
 > ⚠️ [ADR 0004](docs/adr/0004-brute-force-cosine-no-vector-db.md)（総当たり・ベクトル DB 不使用）は
 > ADR 0007 が supersede した。**ただしその性能分析は今も有効**——10万件規模では総当たりで足りる。
@@ -115,10 +116,13 @@ ollama pull bge-m3
 cp .env.example .env      # RECALL_OLLAMA_URL を環境に合わせる
 
 # 4. 動かす
-make test                 # go test ./... -race -cover
-make build                # bin/recall
+make check                # 品質ゲート一式（CI もこれを呼ぶ）
 make run                  # 起動
 ```
+
+`make check` = fmt-check → vet → lint → conformance → test → cover-check → tidy-check → build。
+規則の正本は [`docs/coding-rules.md`](docs/coding-rules.md)、その設計判断は
+[ADR 0010](docs/adr/0010-strictness-is-mechanically-enforced.md)。
 
 ```bash
 curl -s localhost:8080/healthz
@@ -170,6 +174,7 @@ WSL に直接入れるか、Postgres を apt で入れる。内訳は要件定�
 | [`docs/requirements.md`](docs/requirements.md) | 要件定義。スコープ・アーキテクチャ・非機能要件・費用・未決事項 |
 | [`docs/adr/`](docs/adr/) | 設計判断の記録。判断の正本はここ |
 | [`docs/openapi/openapi.yaml`](docs/openapi/openapi.yaml) | API 定義（OpenAPI 3.1） |
+| [`docs/coding-rules.md`](docs/coding-rules.md) | コーディング規約。各規則が active / planned / 不採用の状態を持つ |
 | [`docs/benchmarks/`](docs/benchmarks/) | 実測値。索引や実装の判断は必ずここの数字を根拠にする |
 
 ## ライセンス
