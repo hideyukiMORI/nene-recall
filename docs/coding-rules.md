@@ -214,9 +214,11 @@ cmd/recall ──▶ internal/httpapi ──▶ internal/index (契約) ◀─�
 ```
 
 - 具体ストアを import してよいのは `cmd`（配線点）と `internal/store` 自身のみ
+- **具体 Embedder（`internal/embed/ollama`）も同じ扱い。** import してよいのは
+  `cmd` と実装自身だけで、他の層は `embed.Embedder` 越しに使う（ADR 0012）
 - `internal/` は Go のコンパイラが外部からの import を拒否する
 
-- 機械強制: **active**（`depguard` の `store-is-wired-only-in-cmd`・コンパイラ）
+- 機械強制: **active**（`depguard` の `store-is-wired-only-in-cmd`・`embedder-is-wired-only-in-cmd`・コンパイラ）
 
 ### ARC-002 — 中核は純粋に保つ
 
@@ -224,7 +226,25 @@ cmd/recall ──▶ internal/httpapi ──▶ internal/index (契約) ◀─�
 `time`・`math/rand`・`os`・`net/http`・`database/sql`・`log`・`log/slog` を import しない。
 時刻・乱数・環境は値として渡す。決定性が壊れるとテストが書けなくなる。
 
-- 機械強制: **active**（`depguard` の `pure-core`）
+**適用範囲は契約パッケージ本体のみである。** 上の3つは「契約」を置く場所であり、
+その配下の**実装サブパッケージは pure-core の対象外**とする。
+
+| パッケージ | 位置づけ | pure-core | 代わりに受ける制限 |
+| --- | --- | --- | --- |
+| `internal/index` | 契約 | 対象 | — |
+| `internal/store/postgres` | 実装 | 対象外（`database/sql` 可） | `store-is-wired-only-in-cmd` |
+| `internal/embed` | 契約 | 対象 | — |
+| `internal/embed/ollama` | 実装 | 対象外（`net/http`・`time` 可） | `embedder-is-wired-only-in-cmd` |
+
+実装が中核の制約を免れるのではない。**制約の種類が変わる**——純粋性の代わりに
+「具体実装を知ってよいのは配線点（`cmd`）だけ」という依存方向の制限を受ける。
+判断の根拠は [ADR 0012](adr/0012-embedding-implementations-live-in-subpackages.md)。
+
+🔴 `depguard` の `pure-core` の files glob（`**/internal/embed/*.go` 等）で `*` は `/` を
+跨がないため、サブパッケージは対象に入らない。**この glob を `**` へ「揃える」変更は
+上の設計を壊す。** 変えるなら実装の置き場所を同時に決め直すこと。
+
+- 機械強制: **active**（`depguard` の `pure-core`・`store-is-wired-only-in-cmd`・`embedder-is-wired-only-in-cmd`）
 
 ### ARC-003 — cgo を持ち込まない
 
