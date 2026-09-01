@@ -127,7 +127,11 @@ func (s *Store) encodeContents(ctx context.Context, chunks []chunk.Chunk) ([]str
 	// 渡すかどうかは呼び出し側の契約である（ADR 0008）。
 	vectors, err := s.embedder.Embed(ctx, texts, embed.KindDocument)
 	if err != nil {
-		return nil, fmt.Errorf("%w: embed: %s", errWrite, err.Error())
+		// 🔴 %w を2つ使い、埋め込み側の sentinel を連鎖に残す。
+		// ここを %s（文字列化）にすると embed.ErrProviderUnavailable が切れ、
+		// httpapi が 503 に写せず 500 に落ちる。SQL の失敗は逆にドライバ内部を
+		// 連鎖へ載せない意図で %s のままにしてある。両者の違いは意図的である。
+		return nil, fmt.Errorf("%w: embed: %w", errWrite, err)
 	}
 
 	if len(vectors) != len(chunks) {

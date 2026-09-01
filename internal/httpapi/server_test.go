@@ -2,36 +2,12 @@ package httpapi_test
 
 import (
 	"encoding/json"
-	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/hideyukiMORI/nene-recall/internal/config"
-	"github.com/hideyukiMORI/nene-recall/internal/httpapi"
 )
-
-// newTestServer は検査対象の http.Handler を組み立てる。
-//
-// Config の全フィールドを明示するのは exhaustruct の要求だが、テストにとっても
-// 「サーバが何を見ているか」がこの1箇所で読めるという利点がある。
-func newTestServer() http.Handler {
-	cfg := config.Config{
-		Addr:            ":0",
-		Store:           config.StorePostgres,
-		DatabaseURL:     "postgres://localhost/recall",
-		DBPath:          "recall.db",
-		EmbedProvider:   config.EmbedProviderOllama,
-		EmbedModel:      "bge-m3",
-		EmbedDimensions: 1024,
-		OllamaBaseURL:   "http://localhost:11434",
-		VoyageAPIKey:    "",
-		DefaultAlpha:    0.7,
-	}
-
-	return httpapi.New(cfg, slog.New(slog.DiscardHandler)).Routes()
-}
 
 // TestOrgIDIsMandatory は ADR 0003 の受け入れ条件を固定する。
 //
@@ -60,31 +36,19 @@ func TestOrgIDIsMandatory(t *testing.T) {
 		{"delete by source: org_id 欠落", http.MethodDelete, "/v1/sources/1/chunks", ""},
 	}
 
-	srv := newTestServer()
+	srv := newTestServer(t)
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, strings.NewReader(tc.body))
-			rec := httptest.NewRecorder()
-			srv.ServeHTTP(rec, req)
+			rec := do(t, srv, request{method: tc.method, path: tc.path, body: tc.body})
 
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want %d (org_id must never fall back to a default)",
 					rec.Code, http.StatusBadRequest)
 			}
 
-			var body struct {
-				Error struct {
-					Code string `json:"code"`
-				} `json:"error"`
-			}
-
-			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-				t.Fatalf("response is not valid JSON: %v", err)
-			}
-
-			if !strings.HasPrefix(body.Error.Code, "org_id_") {
-				t.Fatalf("error code = %q, want an org_id_* code", body.Error.Code)
+			if code := errorCode(t, rec); !strings.HasPrefix(code, "org_id_") {
+				t.Fatalf("error code = %q, want an org_id_* code", code)
 			}
 		})
 	}
@@ -92,11 +56,8 @@ func TestOrgIDIsMandatory(t *testing.T) {
 
 // TestSearchRejectsEmptyQuery は org_id が正しくても空クエリを弾くことを確認する。
 func TestSearchRejectsEmptyQuery(t *testing.T) {
-	srv := newTestServer()
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/search",
-		strings.NewReader(`{"org_id":1,"query":""}`))
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
+	srv := newTestServer(t)
+	rec := post(t, srv, "/v1/search", `{"org_id":1,"query":""}`)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
@@ -106,10 +67,8 @@ func TestSearchRejectsEmptyQuery(t *testing.T) {
 // TestHealthzReportsEmbedderID は、保存済みベクトルとの互換判定に使う識別子が
 // 外から見えることを確認する（ADR 0005 の罠の検知手段）。
 func TestHealthzReportsEmbedderID(t *testing.T) {
-	srv := newTestServer()
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil)
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
+	srv := newTestServer(t)
+	rec := get(t, srv, "/healthz")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
@@ -134,24 +93,15 @@ func TestHealthzReportsEmbedderID(t *testing.T) {
 // config.Config は String() を実装していないので、構造体ごと出力すると
 // VoyageAPIKey が漏れる。応答の形を型で固定してあることをここで縛る。
 func TestErrorResponseNeverCarriesConfig(t *testing.T) {
-	cfg := config.Config{
-		Addr:            ":0",
-		Store:           config.StorePostgres,
-		DatabaseURL:     "postgres://user:pw@localhost/recall",
-		DBPath:          "recall.db",
-		EmbedProvider:   config.EmbedProviderVoyage,
-		EmbedModel:      "bge-m3",
-		EmbedDimensions: 1024,
-		OllamaBaseURL:   "http://localhost:11434",
-		VoyageAPIKey:    "super-secret-key",
-		DefaultAlpha:    0.7,
-	}
-	srv := httpapi.New(cfg, slog.New(slog.DiscardHandler)).Routes()
+	cfg := testConfig()
+	cfg.DatabaseURL = "postgres://user:pw@localhost/recall"
+	cfg.EmbedProvider = config.EmbedProviderVoyage
+	cfg.VoyageAPIKey = "super-secret-key"
 
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/search",
-		strings.NewReader(`{"query":"x"}`))
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
+	searcher, writer := newFakes()
+	srv := newTestServerWith(t, cfg, newDeps(searcher, writer))
+
+	rec := post(t, srv, "/v1/search", `{"query":"x"}`)
 
 	for _, secret := range []string{"super-secret-key", "pw"} {
 		if strings.Contains(rec.Body.String(), secret) {

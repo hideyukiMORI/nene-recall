@@ -9,10 +9,7 @@
 // docs/adr/0008-local-embedding-by-default.md を参照。
 package embed
 
-import (
-	"context"
-	"errors"
-)
+import "context"
 
 // Kind は埋め込みの用途を表す。
 //
@@ -30,9 +27,6 @@ const (
 	// KindQuery は検索時に使う。
 	KindQuery Kind = "query"
 )
-
-// ErrUnsupportedKind は Kind が未知の値だったことを表す。
-var ErrUnsupportedKind = errors.New("embed: unsupported input kind")
 
 // Embedder はテキストを埋め込みベクトルに変換する。
 //

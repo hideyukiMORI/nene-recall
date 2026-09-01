@@ -27,22 +27,30 @@ type fakeEmbedder struct {
 	// scale はベクトルの長さの倍率。1 以外にすると正規化の契約を破る実装になり、
 	// validateVector が実際に発火することを確かめられる。
 	scale float64
+	// unavailable が真なら embed.ErrProviderUnavailable を返す。
+	// Ollama が落ちている状況を、実プロセスなしで再現するためのもの。
+	unavailable bool
 }
 
 // newFakeEmbedder は既定の次元を持つ偽実装を作る。
 func newFakeEmbedder(id string) *fakeEmbedder {
 	return &fakeEmbedder{
-		id:     id,
-		dims:   postgres.VectorDimensions,
-		angles: map[string]float64{},
-		kinds:  &[]embed.Kind{},
-		scale:  1,
+		id:          id,
+		dims:        postgres.VectorDimensions,
+		angles:      map[string]float64{},
+		kinds:       &[]embed.Kind{},
+		scale:       1,
+		unavailable: false,
 	}
 }
 
 // Embed は登録した角度から単位ベクトルを作る。未登録の文字列は角度 0 になる。
 func (f *fakeEmbedder) Embed(_ context.Context, texts []string, kind embed.Kind) ([][]float32, error) {
 	*f.kinds = append(*f.kinds, kind)
+
+	if f.unavailable {
+		return nil, fmt.Errorf("%w: fake provider is down", embed.ErrProviderUnavailable)
+	}
 
 	if kind != embed.KindDocument && kind != embed.KindQuery {
 		return nil, fmt.Errorf("%w: %s", embed.ErrUnsupportedKind, kind)

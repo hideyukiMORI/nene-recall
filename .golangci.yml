@@ -102,6 +102,10 @@ linters:
       enforce-patterns:
         - 'github\.com/hideyukiMORI/nene-recall/internal/config\.Config'
         - 'github\.com/hideyukiMORI/nene-recall/internal/index\.Query'
+        # 配線点で組み立てる依存の束。フィールドを足したのに配線を直し忘れると、
+        # ゼロ値の依存を持ったサーバが「起動はする」状態になる。
+        - 'github\.com/hideyukiMORI/nene-recall/internal/embed/ollama\.Config'
+        - 'github\.com/hideyukiMORI/nene-recall/internal/httpapi\.Dependencies'
       # 🔴 exhaustruct_v5 の enforce-patterns は「検査対象を絞る」設定ではない（実測）。
       # 既定で全型が対象になるので、外部パッケージの型はここに1行ずつ足して外す。
       # 「外部の型は全部除外」という包括ルールを書かないこと。都度判断が残るようにする。
@@ -171,6 +175,22 @@ linters:
           deny:
             - pkg: "os"
               desc: "ARC-005: 環境・プロセスを直接触らない。config 経由で値を受け取る。"
+        # ARC-001: 具体 Embedder を知ってよいのは配線点（cmd）と実装自身だけ。
+        # 契約は internal/embed（純粋）、実装は internal/embed/ollama（HTTP 可）という
+        # 非対称を機械に覚えさせる。判断の根拠は
+        # docs/adr/0012-embedding-implementations-live-in-subpackages.md。
+        #
+        # 🔴 pure-core の files glob で `*` は `/` を跨がないため、
+        #    internal/embed/ollama は pure-core の対象外になる。その帰結に
+        #    実装を逃がしている以上、代わりの制限がこのルールである。
+        #    pure-core の glob を `**` へ「揃える」ときは、ADR 0012 ごと見直すこと。
+        embedder-is-wired-only-in-cmd:
+          files:
+            - "!**/cmd/**"
+            - "!**/internal/embed/ollama/**"
+          deny:
+            - pkg: "github.com/hideyukiMORI/nene-recall/internal/embed/ollama"
+              desc: "ARC-001: 具体 Embedder への依存は cmd の配線点に閉じる。embed.Embedder 越しに使う。"
         # ARC-001: 具体ストアを知ってよいのは配線点（cmd）とストア自身だけ
         store-is-wired-only-in-cmd:
           files:
