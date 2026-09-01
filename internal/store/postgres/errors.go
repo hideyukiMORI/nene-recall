@@ -87,3 +87,10 @@ var errOrgMismatch = errors.New("postgres: chunk org_id does not match the reque
 // 書いてもシーケンスは進まず、後続の採番が既存行と衝突する。
 // Corpus 由来の chunk_id の受け入れ方式は Phase 2 の ADR で決める（施主決定）。
 var errChunkIDNotAccepted = errors.New("postgres: explicit chunk id is not accepted in phase 1")
+
+// ---------------------------------------------------------------------------
+// 検索
+// ---------------------------------------------------------------------------
+
+// errSearch は検索経路の SQL が失敗したことを表す。
+var errSearch = errors.New("postgres: search failed")

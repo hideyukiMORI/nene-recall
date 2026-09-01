@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/hideyukiMORI/nene-recall/internal/chunk"
+	"github.com/hideyukiMORI/nene-recall/internal/index"
 	"github.com/hideyukiMORI/nene-recall/internal/org"
 )
 
@@ -65,4 +66,29 @@ func countChunks(t *testing.T, ts *testStore, orgID org.ID) int {
 	}
 
 	return n
+}
+
+// querySpec はテストで組む検索要求の指定。
+//
+// index.Query は exhaustruct_v5 の対象なので全フィールドの明示が要る。
+// テストの本題でない項目を毎回書かずに済ませるための入れ物。
+type querySpec struct {
+	orgID       org.ID
+	text        string
+	limit       int
+	alpha       float32
+	documentIDs []int64
+	sourceIDs   []int64
+}
+
+// newQuery は指定から index.Query を組み立てる。
+func newQuery(spec querySpec) index.Query {
+	return index.Query{
+		OrgID:       spec.orgID,
+		Text:        spec.text,
+		Limit:       spec.limit,
+		Alpha:       spec.alpha,
+		DocumentIDs: spec.documentIDs,
+		SourceIDs:   spec.sourceIDs,
+	}
 }

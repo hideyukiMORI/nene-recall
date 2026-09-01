@@ -105,3 +105,44 @@ func TestPutStoresTheArgumentOrg(t *testing.T) {
 		t.Errorf("🔴 書いていない org B に行がある: %d", got)
 	}
 }
+
+// TestSearchDoesNotCrossOrgs は検索が別 org の行を返さないことを見る。
+//
+// 🔴 これが分離の中で最も静かに壊れる経路である。書き込みと削除は結果が目に見えるが、
+// 検索の漏洩は「余計な結果が混じる」だけなので、単一テナントで開発している限り
+// 一切症状を出さない。Corpus では分離条件が SQL の WHERE に埋まっていたが、
+// 検索を外出しした結果その責任は Go 側へ移っている（CLAUDE.md 地雷1）。
+func TestSearchDoesNotCrossOrgs(t *testing.T) {
+	e := newFakeEmbedder("fake:1024")
+	e.angles["A だけの本文"] = 0
+	e.angles["B だけの本文"] = 0
+	e.angles["問い"] = 0
+
+	ts := newTestStore(t, e)
+	orgA := mustOrgID(t, 1)
+	orgB := mustOrgID(t, 2)
+
+	putOne(t, ts, orgA, "A だけの本文")
+	putOne(t, ts, orgB, "B だけの本文")
+
+	// 両者のベクトルは同一（角度 0）。分離が効いていなければ 2 件返る。
+	results, err := ts.store.Search(t.Context(), newQuery(querySpec{
+		orgID: orgA, text: "問い", limit: 10, alpha: 1,
+		documentIDs: nil, sourceIDs: nil,
+	}))
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("🔴 org A の検索が %d 件返した。want 1（org B の行が混じっていないか）", len(results))
+	}
+
+	if got := results[0].Chunk.Content; got != "A だけの本文" {
+		t.Errorf("🔴 org B の本文が返った: %q", got)
+	}
+
+	if got := results[0].Chunk.OrgID; got != orgA {
+		t.Errorf("結果の OrgID = %s, want %s", got, orgA)
+	}
+}
