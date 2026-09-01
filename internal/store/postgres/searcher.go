@@ -14,7 +14,41 @@ import (
 // Store が検索側の契約を満たしていることをコンパイル時に確かめる。
 var _ index.Searcher = (*Store)(nil)
 
-// searchSQL は org で絞り、ベクトルの近い順に返す。
+// tsRankNormalization は ts_rank に渡す正規化フラグ。
+//
+// 🔴 語彙スコアの性質を決める唯一のつまみである。C1/C2 の比較はこの定数を
+// 変えて測る。ここ1箇所を変えれば Search と SearchVector の両方に効く。
+//
+// フラグはビットの論理和で、意味は次のとおり（PostgreSQL 17 の定義）。
+//
+//	 0 … 文書長を無視する
+//	 1 … rank / (1 + log(文書長))
+//	 2 … rank / 文書長
+//	 4 … 抽出範囲の調和平均距離で割る（ts_rank_cd のみ）
+//	 8 … 相異なる語数で割る
+//	16 … rank / (1 + log(相異なる語数))
+//	32 … rank / (rank + 1)
+//
+// 既定を 2|32 にした理由は2つある。
+//
+// (1) 32 が無いと ts_rank の値域に上限が無く、合成 alpha*vector +
+// (1-alpha)*lexical の重みが意味を失う。vector_score は正規化済みベクトルの
+// 内積なので [-1,1] に収まっており、片側だけ非有界だと alpha が「重み」では
+// なく「単位の変換係数」になる。32 は rank/(rank+1) で [0,1) に押し込む。
+// 🔑 これは OpenAPI と要件定義 F-4 が定める alpha の契約（加重和）を
+// 変えずに済ませるための選択である。RRF のような順位ベースの合成へ移ると
+// 契約そのものを触ることになるので、加重和が機能しないという実測が出るまでは採らない。
+//
+// (2) 2 は文書長で割る。評価セットには 1,136字の一覧表チャンクが5クエリの
+// 正解として繰り返し現れており（testdata/eval/README.md「既知の性質」）、
+// 長さ正規化の有無で長文が有利にも不利にもなる。BM25 は文書長で正規化し
+// ts_rank は既定でしないので、この差を Q-1 の比較に持ち込まないための既定である。
+//
+// ⚠️ どちらの根拠も「測る前の設計判断」であって実測ではない。予想は
+// docs/benchmarks/2026-09-02-lexical-prediction.md に登録してある。
+const tsRankNormalization = 2 | 32
+
+// searchSQL は org で絞り、ベクトルと語彙の合成スコアの高い順に返す。
 //
 // 🔑 演算子は <#>（負の内積）を使う。<=>（コサイン距離）ではない。
 //
@@ -36,14 +70,40 @@ var _ index.Searcher = (*Store)(nil)
 // フィルタが cardinality(...) = 0 OR ... の形なのは、空配列 "{}" を
 // 「フィルタ無し」として扱うため。単に id = ANY('{}') と書くと一件も一致せず、
 // 絞り込まないつもりが全滅する（encode.go の encodeInt64Array を参照）。
+//
+// 🔴 全行に両方のスコアを計算し、合成値で並べて LIMIT する。「ベクトルの上位 N と
+// 語彙の上位 N をマージする」形にしない。索引が無い（ADR 0007）ので、ベクトル側は
+// どちらにせよ全行を走査しており、上位 N で切っても計算量は減らない。減らないのに
+// カットオフ由来の取りこぼし——片側の N 位圏外にあるが合成では上位に来るはずの行が
+// 消える——という新しい誤差源だけが増える。要件定義 Q-1/Q-3 は語彙と合成の効果を
+// 測って決める未決事項であり、測定対象に説明のつかない誤差を混ぜない。
+//
+// 🔑 この選択は索引を入れる段階で必ず再検討が要る。HNSW を張った瞬間、
+// ORDER BY が合成値になっているこの SQL は索引を使えない（索引はベクトル距離
+// 単体でしか順序を作れない）。そのときに「上位 N のマージ」か「索引で絞ってから
+// 再スコア」かを決めることになる。🔴 その判断は Phase 1 項目7 の ADR の仕事で
+// あって、ここで先取りしない。先取りすると、測っていない前提で索引の設計を
+// 決めることになる。
+//
+// 🔴 ORDER BY に id の副キーを置く。同点の並びが実行のたびに揺れると、
+// alpha = 1.0 が純ベクトルと一致することの検証が「たまたま一致した／しなかった」に
+// なり、合成の自己検証が成立しない。PostgreSQL は同点行の順序を保証しない。
+//
+// 合成は SQL 側で行い、その値をそのまま返す。Go 側で計算し直すと、float8 の
+// SQL 演算と float32 の Go 演算がわずかにずれ、「返ってきた並び順と、返ってきた
+// スコアの大小が食い違う」という説明のつかない結果になりうる。順位を決めた式と
+// 報告する値は同一でなければならない。
 const searchSQL = `SELECT id, document_id, source_id, chunk_index, content,
        page_number, section_label,
-       -(embedding <#> $2::vector) AS vector_score
+       -(embedding <#> $2::vector) AS vector_score,
+       ts_rank(lexemes, to_tsquery('simple', $6), $7) AS lexical_score,
+       $8::real * -(embedding <#> $2::vector)
+         + (1 - $8::real) * ts_rank(lexemes, to_tsquery('simple', $6), $7) AS score
 FROM chunks
 WHERE org_id = $1
   AND (cardinality($3::bigint[]) = 0 OR document_id = ANY ($3::bigint[]))
   AND (cardinality($4::bigint[]) = 0 OR source_id   = ANY ($4::bigint[]))
-ORDER BY embedding <#> $2::vector
+ORDER BY score DESC, id
 LIMIT $5`
 
 // scannedRow は1行ぶんの受け取り口。
@@ -59,6 +119,8 @@ type scannedRow struct {
 	pageNumber   sql.NullInt32
 	sectionLabel sql.NullString
 	vectorScore  float64
+	lexicalScore float64
+	score        float64
 }
 
 // Search はベクトルの近い順にチャンクを返す。
@@ -73,6 +135,24 @@ func (s *Store) Search(ctx context.Context, q index.Query) ([]index.Result, erro
 	}
 
 	return s.searchRows(ctx, q, vector)
+}
+
+// lexicalExpression は検索語を to_tsquery に渡す形にする。
+//
+// 🔴 取り込みと同じ Tokenizer を通す。ここで別の分割をすると、同じ語を書いた
+// はずのチャンクとクエリが別のトークンになり、語彙スコアが常に 0 になる。
+// エラーにならないので、単一の分割器で開発している限り表面化しない。
+//
+// トークンが1つも出なければ空文字を返す。to_tsquery は空の tsquery を返し、
+// ts_rank は 0 になるので、合成は alpha*vector に縮退する。🔴 これはエラーに
+// しない。絵文字だけのクエリは異常な入力ではなく、ベクトル側は普通に答えられる。
+func (s *Store) lexicalExpression(text string) (string, error) {
+	expression, err := encodeTsQuery(s.tokenizer.Tokenize(text))
+	if err != nil {
+		return "", fmt.Errorf("%w: query text", err)
+	}
+
+	return expression, nil
 }
 
 // SearchVector は埋め込み済みのベクトルで検索する。
@@ -195,10 +275,15 @@ func (s *Store) encodeQueryText(ctx context.Context, text string) (string, error
 //
 //nolint:nonamedreturns // defer から Close の失敗を返り値へ合流させる唯一の手段。sqlclosecheck が defer を、errcheck が戻り値の検査を要求するため、この3つを同時に満たす書き方が他に無い
 func (s *Store) searchRows(ctx context.Context, q index.Query, vector string) (results []index.Result, err error) {
+	expression, err := s.lexicalExpression(q.Text)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.QueryContext(ctx, searchSQL,
 		q.OrgID.Int64(), vector,
 		encodeInt64Array(q.DocumentIDs), encodeInt64Array(q.SourceIDs),
-		q.Limit)
+		q.Limit, expression, tsRankNormalization, q.Alpha)
 	if err != nil {
 		return nil, fmt.Errorf("%w: query: %s", errSearch, err.Error())
 	}
@@ -224,7 +309,7 @@ func collectResults(rows *sql.Rows, q index.Query) ([]index.Result, error) {
 		var r scannedRow
 
 		err := rows.Scan(&r.id, &r.documentID, &r.sourceID, &r.chunkIndex, &r.content,
-			&r.pageNumber, &r.sectionLabel, &r.vectorScore)
+			&r.pageNumber, &r.sectionLabel, &r.vectorScore, &r.lexicalScore, &r.score)
 		if err != nil {
 			return nil, fmt.Errorf("%w: scan: %s", errSearch, err.Error())
 		}
@@ -241,9 +326,17 @@ func collectResults(rows *sql.Rows, q index.Query) ([]index.Result, error) {
 }
 
 // toResult は1行を検索結果に組み替える。
+//
+// 🔴 3つのスコアはすべて SQL が計算した値をそのまま写す。Score をここで
+// alpha*VectorScore + (1-alpha)*LexicalScore と計算し直さないこと。SQL は
+// float8 で、Go は float32 で計算するので結果がわずかにずれ、「返ってきた
+// 並び順と、返ってきたスコアの大小が食い違う」という説明のつかない結果に
+// なりうる。順位を決めた式と報告する値は同一でなければならない。
+//
+// 🔑 VectorScore と LexicalScore を分けて返すのは、外したときにどちら側が
+// 原因かを切り分けるためである（index.Result の doc・要件定義 §3）。
+// alpha を実データで調整するには、合成後の値だけでは足りない。
 func (r scannedRow) toResult(q index.Query) index.Result {
-	vectorScore := float32(r.vectorScore)
-
 	return index.Result{
 		Chunk: chunk.Chunk{
 			ID: r.id,
@@ -259,14 +352,11 @@ func (r scannedRow) toResult(q index.Query) index.Result {
 			PageNumber:   nullableInt(r.pageNumber),
 			SectionLabel: nullableString(r.sectionLabel),
 		},
-		VectorScore: vectorScore,
-		// 語彙検索は未実装（Phase 1 項目4・5）。合成は alpha*vector + (1-alpha)*lexical で、
-		// lexical が 0 の間は alpha*vector に縮退する。これは過渡形である。
-		//
 		// 🔴 alpha の値に根拠はまだ無い（要件定義 Q-3）。ADR 0009 の評価セットで
 		// 最適値を決めるまで、この係数を「調整済み」として扱わないこと。
-		LexicalScore: 0,
-		Score:        q.Alpha * vectorScore,
+		VectorScore:  float32(r.vectorScore),
+		LexicalScore: float32(r.lexicalScore),
+		Score:        float32(r.score),
 	}
 }
 
