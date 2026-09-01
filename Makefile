@@ -29,7 +29,10 @@ EVAL_OUT ?= docs/benchmarks/data/$(shell date +%F)-eval-$(EVAL_LABEL).json
 # （alpha=0 は純語彙という意味のある条件で、Q-3 の掃引で実際に使う）。
 EVAL_ALPHA ?=
 EVAL_ROUNDS ?=
-EVAL_FLAGS := $(if $(EVAL_ALPHA),-alpha $(EVAL_ALPHA)) $(if $(EVAL_ROUNDS),-rounds $(EVAL_ROUNDS))
+EVAL_FUSION ?=
+EVAL_FLAGS := $(if $(EVAL_ALPHA),-alpha $(EVAL_ALPHA)) \
+              $(if $(EVAL_ROUNDS),-rounds $(EVAL_ROUNDS)) \
+              $(if $(EVAL_FUSION),-fusion $(EVAL_FUSION))
 
 .PHONY: all check build run test cover cover-check vet fmt fmt-check lint conformance tidy tidy-check vuln tools clean eval
 
@@ -136,6 +139,7 @@ tools:
 ## 例) make eval EVAL_LABEL=alpha-05 EVAL_ALPHA=0.5 GPU_NOTE="他アプリが 5.7GB 使用中"
 ##     make eval EVAL_LABEL=alpha-00 EVAL_ALPHA=0   （純語彙）
 ##     make eval EVAL_LABEL=alpha-10 EVAL_ALPHA=1   （純ベクトル・基準線と同条件）
+##     make eval EVAL_LABEL=rrf EVAL_FUSION=rrf      （順位融合・alpha は無視される）
 ##
 ## 🔴 条件を変えたら EVAL_LABEL も変えること。同じ名前で上書きすると、
 ## 前の条件のレポートが消えて before/after を並べられなくなる。

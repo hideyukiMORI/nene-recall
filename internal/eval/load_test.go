@@ -156,6 +156,7 @@ func TestEncodeReportProducesReadableJSON(t *testing.T) {
 				WarmupRounds: 1, KValues: eval.KValues(),
 				GoldLengthThresholdRunes: eval.GoldLengthThreshold,
 				LongChunkKeys:            eval.LongGoldKeys(),
+				Ranking:                  testReportRanking(),
 				PercentileMethod:         eval.PercentileMethod,
 			},
 			Queries: nil,

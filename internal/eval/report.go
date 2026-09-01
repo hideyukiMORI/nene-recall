@@ -19,6 +19,7 @@ import (
 //   - ranked_keys が文字列の配列から、スコア付きのオブジェクトの配列になった
 //   - summary に gold_length_recall と long_chunk_recall を足した
 //   - conditions に gold_length_threshold_runes と long_chunk_keys を足した
+//   - conditions に ranking（融合方式・ts_rank のフラグ・RRF の k）を足した
 //
 // 🔴 ranked_keys の名前を残して型だけ変えたのは、旧様式を読む道具が
 // 「フィールドが無い」で静かに素通りするのではなく、型の不一致で落ちるように
@@ -134,8 +135,28 @@ type Conditions struct {
 	GoldLengthThresholdRunes int `json:"gold_length_threshold_runes"`
 	// LongChunkKeys は名指しで追跡する長文 gold チャンク。
 	LongChunkKeys []string `json:"long_chunk_keys"`
+	// Ranking はストアが順位付けに使った条件。
+	//
+	// 🔴 alpha だけでは条件が決まらない。融合方式によって alpha の効き方は
+	// 変わり（順位融合では無視される）、語彙スコアの作り方も ts_rank の
+	// フラグで変わる。どれか1つでも欠けたレポートは、後から条件を特定できない
+	// ので正本になれない (docs/adr/0013-evaluation-harness-design.md)。
+	Ranking RankingSettings `json:"ranking"`
 	// PercentileMethod はパーセンタイルの定義。
 	PercentileMethod string `json:"percentile_method"`
+}
+
+// RankingSettings はストアが順位付けに使った条件の記録。
+//
+// 🔑 internal/eval はこの中身を解釈しない。具体ストアを知らない層なので
+// (ARC-001)、値は配線点 (cmd/eval) が集めてそのまま運ぶ。
+type RankingSettings struct {
+	// Fusion は融合方式の名前（例 "weighted-sum" / "rrf"）。
+	Fusion string `json:"fusion"`
+	// TsRankNormalization は ts_rank に渡した正規化フラグ。
+	TsRankNormalization int `json:"ts_rank_normalization"`
+	// RRFK は RRF の平滑化定数。
+	RRFK int `json:"rrf_k"`
 }
 
 // QueryReport はクエリ1件の生データ。

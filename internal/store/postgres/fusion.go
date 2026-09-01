@@ -93,6 +93,24 @@ func FusionNames() []string {
 	return []string{fusionWeightedSumName, fusionRRFName}
 }
 
+// RankingSettings はストアが順位付けに使った条件。
+//
+// 🔑 レポートに残すためだけの値である。どの方式・どの係数で測ったかが
+// 記録されていないレポートは、後から条件を特定できないので正本になれない
+// (docs/adr/0013-evaluation-harness-design.md)。
+//
+// 🔴 定数を直接公開せず、ストアに聞く形にしてある。定数を変えたときに
+// レポートが自動で追随し、「コードは変えたが記録は古いまま」が起きない。
+type RankingSettings struct {
+	// Fusion は融合方式の名前。
+	Fusion string
+	// TsRankNormalization は ts_rank に渡した正規化フラグ。
+	TsRankNormalization int
+	// RRFK は RRF の平滑化定数。方式が RRF でなくても記録する
+	// （条件表が方式によって欠けると、並べて読めなくなる）。
+	RRFK int
+}
+
 // statement は方式に応じた SQL と、その方式が使う $8 の値を返す。
 //
 // 🔴 $8 は方式ごとに意味が違う（方式A は alpha、方式B は RRF の k）。

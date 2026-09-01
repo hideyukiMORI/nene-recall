@@ -123,11 +123,17 @@ func New(db *sql.DB, e embed.Embedder, t lexical.Tokenizer, f Fusion) (*Store, e
 	}, nil
 }
 
-// Fusion はこのストアが使っている融合方式を返す。
+// RankingSettings はこのストアが順位付けに使っている条件を返す。
 //
-// 🔑 計測レポートに条件を記録するために要る。どの方式で測ったかが残らない
-// レポートは、後から条件を特定できないので正本になれない (ADR 0013)。
-func (s *Store) Fusion() Fusion { return s.fusion }
+// 🔑 計測レポートに条件を記録するために要る。どの方式・どの係数で測ったかが
+// 残らないレポートは、後から条件を特定できないので正本になれない (ADR 0013)。
+func (s *Store) RankingSettings() RankingSettings {
+	return RankingSettings{
+		Fusion:              s.fusion.String(),
+		TsRankNormalization: tsRankNormalization,
+		RRFK:                RRFK,
+	}
+}
 
 // Ping は DB へ到達できることを確かめる。/readyz から呼ぶ。
 func (s *Store) Ping(ctx context.Context) error {

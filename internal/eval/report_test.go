@@ -60,11 +60,7 @@ func TestNewReportCarriesEnvironmentAndInputs(t *testing.T) {
 		PostgresVersion: "17.11", PgvectorVersion: "0.8.6", GPUNote: "占有ベンチではない",
 	}
 
-	inputs := eval.Inputs{
-		Corpus:  eval.FileInput{Path: "testdata/eval/corpus.jsonl", SHA256: "aa", Count: 3},
-		Queries: eval.FileInput{Path: "testdata/eval/queries.jsonl", SHA256: "bb", Count: 2},
-		Tags:    eval.FileInput{Path: "testdata/eval/tags.json", SHA256: "cc", Count: 2},
-	}
+	inputs := testReportInputs()
 
 	measurement := eval.Measurement{
 		Conditions: eval.Conditions{
@@ -72,6 +68,7 @@ func TestNewReportCarriesEnvironmentAndInputs(t *testing.T) {
 			WarmupRounds: 1, KValues: eval.KValues(),
 			GoldLengthThresholdRunes: eval.GoldLengthThreshold,
 			LongChunkKeys:            eval.LongGoldKeys(),
+			Ranking:                  testReportRanking(),
 			PercentileMethod:         eval.PercentileMethod,
 		},
 		Queries: nil,
@@ -150,6 +147,8 @@ func TestReportMarshalsToJSON(t *testing.T) {
 		`"vector_score"`, `"lexical_score"`, `"micro_recall"`,
 		`"gold_length_recall"`, `"long_chunk_recall"`,
 		`"gold_length_threshold_runes"`, `"long_chunk_keys"`,
+		// 条件の記録。alpha だけでは条件が決まらない。
+		`"ranking"`, `"fusion"`, `"ts_rank_normalization"`, `"rrf_k"`,
 	}
 
 	for _, key := range want {
@@ -170,6 +169,7 @@ func jsonTestMeasurement() eval.Measurement {
 			WarmupRounds: 1, KValues: eval.KValues(),
 			GoldLengthThresholdRunes: eval.GoldLengthThreshold,
 			LongChunkKeys:            eval.LongGoldKeys(),
+			Ranking:                  testReportRanking(),
 			PercentileMethod:         eval.PercentileMethod,
 		},
 		Queries: []eval.QueryReport{{
@@ -203,5 +203,21 @@ func jsonTestMeasurement() eval.Measurement {
 				Keys: nil, Hits: 0, Total: 0, Value: 0,
 			},
 		},
+	}
+}
+
+// testReportRanking はレポートの検査に使う順位付け条件の記録。
+//
+// internal/eval はこの中身を解釈しない。JSON に項目が出ることだけが要求である。
+func testReportRanking() eval.RankingSettings {
+	return eval.RankingSettings{Fusion: "weighted-sum", TsRankNormalization: 0, RRFK: 60}
+}
+
+// testReportInputs はレポートの検査に使う入力の同一性。
+func testReportInputs() eval.Inputs {
+	return eval.Inputs{
+		Corpus:  eval.FileInput{Path: "testdata/eval/corpus.jsonl", SHA256: "aa", Count: 3},
+		Queries: eval.FileInput{Path: "testdata/eval/queries.jsonl", SHA256: "bb", Count: 2},
+		Tags:    eval.FileInput{Path: "testdata/eval/tags.json", SHA256: "cc", Count: 2},
 	}
 }

@@ -28,7 +28,7 @@ make eval EVAL_LABEL=baseline GPU_NOTE="他アプリが 5.7GB 使用中"
 | --- | --- |
 | 環境 | git revision / 未コミット変更の有無・Go 版・`embedder_id`・**Ollama の版とモデル digest**・PostgreSQL と pgvector の版・GPU 占有の自己申告 |
 | 入力の同一性 | 3ファイルの **sha256** と件数 |
-| 条件 | `alpha`・`limit`・`rounds`・ウォームアップ周回数・`k` 値・**パーセンタイルの定義** |
+| 条件 | `alpha`・`limit`・`rounds`・ウォームアップ周回数・`k` 値・**パーセンタイルの定義**・**順位付けの条件**（`ranking`: 融合方式・`ts_rank` の正規化フラグ・RRF の `k`） |
 | per-query の生データ | 上位の並び（`eval_key` と**3つのスコア**）・正解ごとの順位（圏外は `null`）・ラウンドごとの latency 2系統 |
 | 集計値 | `recall@1/5/10`・`MRR`・p50/p95（2系統）・タグ別 `recall`・**micro 内訳**・**gold 長さ別の内訳**・**名指しの長文チャンクの追跡** |
 
@@ -49,7 +49,20 @@ v2 で変えたのは3点。
    🔴 名前を変えずに型だけ変えたのは、v1 を読む道具が「フィールドが無い」で
    静かに素通りするのではなく、型の不一致で落ちるようにするためである
 2. **`summary` に `micro_recall` / `gold_length_recall` / `long_chunk_recall` が増えた**
-3. **`conditions` に `gold_length_threshold_runes` / `long_chunk_keys` が増えた**
+3. **`conditions` に `gold_length_threshold_runes` / `long_chunk_keys` /
+   `ranking` が増えた**
+
+🔴 **`alpha` だけでは条件が決まらない。** 融合方式によって `alpha` の効き方は
+変わり（順位融合 `rrf` では**無視される**）、語彙スコアの作り方も `ts_rank` の
+正規化フラグで変わる。レポートを並べるときは必ず `conditions.ranking` を見ること。
+
+```bash
+make eval EVAL_LABEL=rrf EVAL_FUSION=rrf     # 順位融合（alpha は無視される）
+make eval EVAL_LABEL=alpha-05 EVAL_ALPHA=0.5 # 加重和
+```
+
+`ranking` はフラグの値ではなく**ストアが実際に使った条件**を記録する。既定を
+変えたときに「指定したつもりの条件」と「実際に使われた条件」がずれない。
 
 🔴 **v1 と v2 のレポートで `ranked_keys` を直接比べないこと。** 集計値
 （`recall` / `MRR` / タグ別）は定義が変わっていないので比較できる。
