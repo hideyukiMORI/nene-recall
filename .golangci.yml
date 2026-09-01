@@ -149,6 +149,10 @@ linters:
             - "**/internal/chunk/*.go"
             - "**/internal/index/*.go"
             - "**/internal/embed/*.go"
+            # 語彙分割の契約。実装 (internal/lexical/bigram) はサブパッケージに
+            # 置くので対象外になる。埋め込みと同じ非対称であり、根拠は
+            # docs/adr/0012-embedding-implementations-live-in-subpackages.md。
+            - "**/internal/lexical/*.go"
           deny:
             - pkg: "time"
               desc: "ARC-002: 中核が時計を直接読まない。必要なら値として渡す。"
