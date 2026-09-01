@@ -29,7 +29,11 @@ import (
 // 期待値は「こうあってほしい」ではなく「実測してこうだった」である。パーサの
 // 挙動が版で変われば、この表が落ちて気づける。
 func TestLexemeRoundTrip(t *testing.T) {
-	ts := newTestStoreWith(t, newFakeEmbedder("fake:1024"), bigram.New())
+	ts := newTestStoreWith(t, storeSpec{
+		embedder:  newFakeEmbedder("fake:1024"),
+		tokenizer: bigram.New(),
+		fusion:    postgres.FusionWeightedSum,
+	})
 	orgA := mustOrgID(t, 1)
 
 	for i, tc := range lexemeRoundTripCases() {
@@ -114,7 +118,11 @@ func lexemeRoundTripCases() []lexemeRoundTripCase {
 // 固定するが、「索引側と検索側が噛み合うか」は別の性質であり、片側だけ引用符で
 // 囲むといった変更で静かに壊れる。本文で引ける、を直接見る。
 func TestLexemeRoundTripMatchesItsOwnQuery(t *testing.T) {
-	ts := newTestStoreWith(t, newFakeEmbedder("fake:1024"), bigram.New())
+	ts := newTestStoreWith(t, storeSpec{
+		embedder:  newFakeEmbedder("fake:1024"),
+		tokenizer: bigram.New(),
+		fusion:    postgres.FusionWeightedSum,
+	})
 	orgA := mustOrgID(t, 1)
 
 	contents := []string{
@@ -154,7 +162,11 @@ func TestLexemeRoundTripMatchesItsOwnQuery(t *testing.T) {
 // （RECALL_STORE・正解4件）を救うのはこの精度であり、ここが緩むと語彙検索は
 // 偽ヒットで recall を下げる方向に働く。
 func TestLexemeRoundTripKeepsIdentifiersPrecise(t *testing.T) {
-	ts := newTestStoreWith(t, newFakeEmbedder("fake:1024"), bigram.New())
+	ts := newTestStoreWith(t, storeSpec{
+		embedder:  newFakeEmbedder("fake:1024"),
+		tokenizer: bigram.New(),
+		fusion:    postgres.FusionWeightedSum,
+	})
 	orgA := mustOrgID(t, 1)
 
 	target := putContent(t, ts, chunkSpec{

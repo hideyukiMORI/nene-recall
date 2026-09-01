@@ -56,7 +56,13 @@ var _ index.Searcher = (*Store)(nil)
 // 動きうるので、方式の比較が終わったら振り直す余地がある。
 const tsRankNormalization = 0
 
-// searchSQL は org で絞り、ベクトルと語彙の合成スコアの高い順に返す。
+// candidatesCTE は org で絞った候補集合に、2つのスコアを付けたもの。
+//
+// 🔴 融合方式ごとに SQL を書き分けるが、候補集合の定義はこの1箇所だけに置く。
+// 分離条件 (org_id) と絞り込みを方式ごとに書くと、片方だけ直して片方を
+// 直し忘れる経路ができる。テナントの分離は、方式の選択とは独立に成り立って
+// いなければならない (docs/adr/0003-org-id-is-mandatory.md)。
+// 定数の連結なので、組み立ては実行時ではなくコンパイル時に済む。
 //
 // 🔑 演算子は <#>（負の内積）を使う。<=>（コサイン距離）ではない。
 //
@@ -79,40 +85,97 @@ const tsRankNormalization = 0
 // 「フィルタ無し」として扱うため。単に id = ANY('{}') と書くと一件も一致せず、
 // 絞り込まないつもりが全滅する（encode.go の encodeInt64Array を参照）。
 //
-// 🔴 全行に両方のスコアを計算し、合成値で並べて LIMIT する。「ベクトルの上位 N と
-// 語彙の上位 N をマージする」形にしない。索引が無い（ADR 0007）ので、ベクトル側は
-// どちらにせよ全行を走査しており、上位 N で切っても計算量は減らない。減らないのに
-// カットオフ由来の取りこぼし——片側の N 位圏外にあるが合成では上位に来るはずの行が
-// 消える——という新しい誤差源だけが増える。要件定義 Q-1/Q-3 は語彙と合成の効果を
-// 測って決める未決事項であり、測定対象に説明のつかない誤差を混ぜない。
+// 🔴 全行に両方のスコアを計算する。「ベクトルの上位 N と語彙の上位 N をマージ
+// する」形にしない。索引が無い（ADR 0007）ので、ベクトル側はどちらにせよ全行を
+// 走査しており、上位 N で切っても計算量は減らない。減らないのにカットオフ由来の
+// 取りこぼし——片側の N 位圏外にあるが合成では上位に来るはずの行が消える——という
+// 新しい誤差源だけが増える。要件定義 Q-1/Q-3 は語彙と合成の効果を測って決める
+// 未決事項であり、測定対象に説明のつかない誤差を混ぜない。
 //
 // 🔑 この選択は索引を入れる段階で必ず再検討が要る。HNSW を張った瞬間、
 // ORDER BY が合成値になっているこの SQL は索引を使えない（索引はベクトル距離
-// 単体でしか順序を作れない）。そのときに「上位 N のマージ」か「索引で絞ってから
-// 再スコア」かを決めることになる。🔴 その判断は Phase 1 項目7 の ADR の仕事で
-// あって、ここで先取りしない。先取りすると、測っていない前提で索引の設計を
-// 決めることになる。
+// 単体でしか順序を作れない）。🔴 その判断は Phase 1 項目7 の ADR の仕事であって、
+// ここで先取りしない。先取りすると、測っていない前提で索引の設計を決めることになる。
+const candidatesCTE = `WITH candidates AS (
+  SELECT id, document_id, source_id, chunk_index, content,
+         page_number, section_label,
+         -(embedding <#> $2::vector) AS vector_score,
+         ts_rank(lexemes, to_tsquery('simple', $6), $7) AS lexical_score
+  FROM chunks
+  WHERE org_id = $1
+    AND (cardinality($3::bigint[]) = 0 OR document_id = ANY ($3::bigint[]))
+    AND (cardinality($4::bigint[]) = 0 OR source_id   = ANY ($4::bigint[]))
+)`
+
+// searchWeightedSumSQL は方式A（加重和）。$8 は alpha。
 //
-// 🔴 ORDER BY に id の副キーを置く。同点の並びが実行のたびに揺れると、
-// alpha = 1.0 が純ベクトルと一致することの検証が「たまたま一致した／しなかった」に
-// なり、合成の自己検証が成立しない。PostgreSQL は同点行の順序を保証しない。
+// 🔴 lexical_score をクエリ内の最大値で割ってから合成する。割らないと加重和は
+// 機能しない——2026-09-02 の実測で lexical は中央値 0.00016、vector は中央値
+// 0.44 とスケールが3桁違い、alpha=0.7 と alpha=1.0 で順位が変わったクエリは
+// 58 件中 1 件だけだった。alpha は「重み」であって「単位の変換係数」ではない。
 //
-// 合成は SQL 側で行い、その値をそのまま返す。Go 側で計算し直すと、float8 の
-// SQL 演算と float32 の Go 演算がわずかにずれ、「返ってきた並び順と、返ってきた
-// スコアの大小が食い違う」という説明のつかない結果になりうる。順位を決めた式と
-// 報告する値は同一でなければならない。
-const searchSQL = `SELECT id, document_id, source_id, chunk_index, content,
+// 🔴 vector_score は正規化しない。正規化済みベクトルの内積であり、OpenAPI が
+// その意味で定義している。クエリ内で割ると上位1件が常に 1.0 になり、
+// 「どれだけ似ているか」という絶対的な意味が失われる。
+//
+// 🔴 NULLIF で 0 除算を避ける。全行の lexical が 0（語彙が1件も当たらない、
+// あるいはクエリのトークンが空）のとき MAX は 0 になる。NULLIF が NULL を返し、
+// 除算が NULL になり、COALESCE が 0 に落とすので、合成は alpha*vector に
+// 縮退する。エラーにはしない——語彙が当たらないのは正常な検索結果である。
+//
+// ⚠️ 返す lexical_score は正規化前の生の値である（下の scannedRow の説明を参照）。
+const searchWeightedSumSQL = candidatesCTE + `
+SELECT id, document_id, source_id, chunk_index, content,
        page_number, section_label,
-       -(embedding <#> $2::vector) AS vector_score,
-       ts_rank(lexemes, to_tsquery('simple', $6), $7) AS lexical_score,
-       $8::real * -(embedding <#> $2::vector)
-         + (1 - $8::real) * ts_rank(lexemes, to_tsquery('simple', $6), $7) AS score
-FROM chunks
-WHERE org_id = $1
-  AND (cardinality($3::bigint[]) = 0 OR document_id = ANY ($3::bigint[]))
-  AND (cardinality($4::bigint[]) = 0 OR source_id   = ANY ($4::bigint[]))
+       vector_score, lexical_score,
+       $8::real * vector_score
+         + (1 - $8::real)
+           * COALESCE(lexical_score / NULLIF(MAX(lexical_score) OVER (), 0), 0) AS score
+FROM candidates
 ORDER BY score DESC, id
 LIMIT $5`
+
+// searchRRFSQL は方式B（順位融合）。$8 は RRF の平滑化定数 k。
+//
+// 🔑 スコアの値ではなく順位だけを使うので、ベクトルと語彙のスケールが
+// 3桁違っても原理的に問題にならない。方式A が正規化で解いている問題を、
+// こちらは値を捨てることで解いている。
+//
+// ⚠️ alpha はこの方式では使わない。重みを表す場所が無いので、指定されても
+// 順位に影響しない。契約（要件定義 F-4・OpenAPI）は加重和のままなので、
+// この方式は計測のための実装である。既定にするなら ADR が要る。
+//
+// 🔴 古典的な RRF は「2つの検索器が返した上位 N 件のリスト」を融合するが、
+// ここは候補集合の全行に順位を振っている。索引が無く全行を走査しているので
+// 上位 N で切る理由が無いのと、切ると新しい誤差源が増えるためである。
+// ⚠️ 帰結として、語彙が1件も当たらない行にも lexical_rank が付く
+// （lexical_score = 0 の行は RANK() が同順位でまとめる）。それらは互いに同じ
+// 加点を受けるので相対順位は変わらないが、語彙が当たった行との差は、
+// 上位 N を切る実装より小さくなる。オフラインで上位10件どうしを融合した
+// 見積りとは、この点で条件が違う。
+//
+// float8 に明示的に寄せているのは、1.0 / bigint が numeric になるのを避ける
+// ため。numeric はドライバの走査先が float64 と噛み合わない。
+const searchRRFSQL = candidatesCTE + `, ranked AS (
+  SELECT id, document_id, source_id, chunk_index, content,
+         page_number, section_label, vector_score, lexical_score,
+         RANK() OVER (ORDER BY vector_score  DESC) AS vector_rank,
+         RANK() OVER (ORDER BY lexical_score DESC) AS lexical_rank
+  FROM candidates
+)
+SELECT id, document_id, source_id, chunk_index, content,
+       page_number, section_label,
+       vector_score, lexical_score,
+       1.0::float8 / ($8::int + vector_rank)::float8
+         + 1.0::float8 / ($8::int + lexical_rank)::float8 AS score
+FROM ranked
+ORDER BY score DESC, id
+LIMIT $5`
+
+// 🔴 どちらの方式も ORDER BY に id の副キーを置く。同点の並びが実行のたびに
+// 揺れると、alpha = 1.0 が純ベクトルと一致することの検証が「たまたま一致した／
+// しなかった」になり、合成の自己検証が成立しない。PostgreSQL は同点行の順序を
+// 保証しない。RRF では RANK() が同順位をまとめるので同点はむしろ普通に起きる。
 
 // scannedRow は1行ぶんの受け取り口。
 //
@@ -288,10 +351,15 @@ func (s *Store) searchRows(ctx context.Context, q index.Query, vector string) (r
 		return nil, err
 	}
 
-	rows, err := s.db.QueryContext(ctx, searchSQL,
+	statement, fusionArg, err := s.fusion.statement(q.Alpha)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.db.QueryContext(ctx, statement,
 		q.OrgID.Int64(), vector,
 		encodeInt64Array(q.DocumentIDs), encodeInt64Array(q.SourceIDs),
-		q.Limit, expression, tsRankNormalization, q.Alpha)
+		q.Limit, expression, tsRankNormalization, fusionArg)
 	if err != nil {
 		return nil, fmt.Errorf("%w: query: %s", errSearch, err.Error())
 	}
@@ -336,14 +404,28 @@ func collectResults(rows *sql.Rows, q index.Query) ([]index.Result, error) {
 // toResult は1行を検索結果に組み替える。
 //
 // 🔴 3つのスコアはすべて SQL が計算した値をそのまま写す。Score をここで
-// alpha*VectorScore + (1-alpha)*LexicalScore と計算し直さないこと。SQL は
-// float8 で、Go は float32 で計算するので結果がわずかにずれ、「返ってきた
-// 並び順と、返ってきたスコアの大小が食い違う」という説明のつかない結果に
-// なりうる。順位を決めた式と報告する値は同一でなければならない。
+// 計算し直さないこと。SQL は float8 で、Go は float32 で計算するので結果が
+// わずかにずれ、「返ってきた並び順と、返ってきたスコアの大小が食い違う」と
+// いう説明のつかない結果になりうる。順位を決めた式と報告する値は同一で
+// なければならない。
 //
 // 🔑 VectorScore と LexicalScore を分けて返すのは、外したときにどちら側が
 // 原因かを切り分けるためである（index.Result の doc・要件定義 §3）。
-// alpha を実データで調整するには、合成後の値だけでは足りない。
+//
+// 🔴 返すのは融合に入れる前の「生の」スコアである。方式A はクエリ内の最大値で
+// 割った値を合成に使い、方式B は順位に置き換えて使うが、どちらの場合も
+// ここに出るのは変換前の値である。理由は2つ。
+//
+// (1) vector_score と lexical_score の意味を方式によって変えないため。
+// 方式ごとに中身が変わると、条件をまたいでレポートを並べたときに読めなくなる。
+// OpenAPI もこの2つを「ベクトル類似度」「語彙一致度」として定義している。
+// (2) スケールの診断が今回まさに必要だったため。生の値が出ていたからこそ、
+// lexical が中央値 0.00016 で vector が 0.44 だと分かった（2026-09-02）。
+//
+// ⚠️ 対価として、Score が2つのスコアから1行だけでは再計算できない。方式A は
+// クエリ内の最大値、方式B は候補集合全体の順位を要するためである。
+// これはクエリ全体を見て決まる融合の性質そのもので、隠すと逆に誤解を招く。
+// どの方式・どの係数で測ったかはレポートの conditions に記録される。
 func (r scannedRow) toResult(q index.Query) index.Result {
 	return index.Result{
 		Chunk: chunk.Chunk{

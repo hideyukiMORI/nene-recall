@@ -285,7 +285,7 @@ func (s session) openEvalStore(ctx context.Context, embedder embed.Embedder) (ev
 		return evalStore{}, fmt.Errorf("open evaluation database: %w", err)
 	}
 
-	store, err := postgres.New(db, embedder, bigram.New())
+	store, err := postgres.New(db, embedder, bigram.New(), postgres.FusionWeightedSum)
 	if err != nil {
 		return evalStore{}, errors.Join(fmt.Errorf("build store: %w", err), db.Close())
 	}

@@ -104,7 +104,7 @@ func TestNewRejectsDimensionMismatch(t *testing.T) {
 	e := newFakeEmbedder("fake:768")
 	e.dims = 768
 
-	_, err := postgres.New(nil, e, newFakeTokenizer("fake-tokenizer:1"))
+	_, err := postgres.New(nil, e, newFakeTokenizer("fake-tokenizer:1"), postgres.FusionWeightedSum)
 	if !errors.Is(err, postgres.ErrEmbedderDimensions()) {
 		t.Fatalf("次元 768 の Embedder が受け入れられた: %v", err)
 	}
@@ -114,7 +114,8 @@ func TestNewRejectsDimensionMismatch(t *testing.T) {
 //
 // 空のまま進むと embedder_id 列の CHECK 違反という分かりにくい形で落ちる。
 func TestNewRejectsEmptyEmbedderID(t *testing.T) {
-	_, err := postgres.New(nil, newFakeEmbedder(""), newFakeTokenizer("fake-tokenizer:1"))
+	_, err := postgres.New(nil, newFakeEmbedder(""), newFakeTokenizer("fake-tokenizer:1"),
+		postgres.FusionWeightedSum)
 	if !errors.Is(err, postgres.ErrEmbedderID()) {
 		t.Fatalf("空の識別子が受け入れられた: %v", err)
 	}
@@ -125,7 +126,7 @@ func TestNewRejectsEmptyEmbedderID(t *testing.T) {
 // 🔴 nil の Tokenizer を持ったストアは、取り込みの瞬間に nil 参照で落ちる。
 // 設定の誤りは設定を読んだ直後に落とす、という Embedder 側と同じ扱いにする。
 func TestNewRejectsMissingTokenizer(t *testing.T) {
-	_, err := postgres.New(nil, newFakeEmbedder("fake:1024"), nil)
+	_, err := postgres.New(nil, newFakeEmbedder("fake:1024"), nil, postgres.FusionWeightedSum)
 	if !errors.Is(err, postgres.ErrTokenizerID()) {
 		t.Fatalf("nil の Tokenizer が受け入れられた: %v", err)
 	}
@@ -136,8 +137,23 @@ func TestNewRejectsMissingTokenizer(t *testing.T) {
 // 空のまま進むと tokenizer_id 列の CHECK 違反という分かりにくい形で落ちる。
 // embedder_id と同じ扱いである。
 func TestNewRejectsEmptyTokenizerID(t *testing.T) {
-	_, err := postgres.New(nil, newFakeEmbedder("fake:1024"), newFakeTokenizer(""))
+	_, err := postgres.New(nil, newFakeEmbedder("fake:1024"), newFakeTokenizer(""),
+		postgres.FusionWeightedSum)
 	if !errors.Is(err, postgres.ErrTokenizerID()) {
 		t.Fatalf("空の分割器識別子が受け入れられた: %v", err)
+	}
+}
+
+// TestNewRejectsUnknownFusion は未知の融合方式を構築時に落とすことを確かめる。
+//
+// 🔴 Fusion は int なので、範囲外の値を作ること自体は言語仕様上いつでもできる
+// (GO-003)。検索のたびに失敗する構成を「起動はする」状態にしない。
+func TestNewRejectsUnknownFusion(t *testing.T) {
+	const outOfRange = postgres.Fusion(99)
+
+	_, err := postgres.New(nil, newFakeEmbedder("fake:1024"),
+		newFakeTokenizer("fake-tokenizer:1"), outOfRange)
+	if !errors.Is(err, postgres.ErrUnknownFusion()) {
+		t.Fatalf("未知の融合方式が受け入れられた: %v", err)
 	}
 }

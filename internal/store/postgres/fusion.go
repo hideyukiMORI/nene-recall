@@ -1,0 +1,129 @@
+package postgres
+
+import "fmt"
+
+// 本ファイルは「ベクトルと語彙のスコアをどう1つの順位にまとめるか」を型にする。
+//
+// 🔴 2つの方式は、どちらが良いか分かっていないから2つある。要件定義 Q-1/Q-3 は
+// 実測で決める未決事項であり、選ぶのは測る人であって実装する人ではない。
+// 片方を手を抜いて実装すると、その手抜きが「方式の優劣」として記録に残る。
+// 両方を同じ丁寧さで書くこと。
+
+// Fusion はベクトルと語彙のスコアを1つの順位にまとめる方式。
+//
+// 🔑 ゼロ値は FusionWeightedSum である。既定を変えるのは実測を見て ADR を
+// 書いてからなので、ゼロ値が現状維持になるように並べてある。
+type Fusion int
+
+const (
+	// FusionWeightedSum は加重和。alpha*vector + (1-alpha)*lexical。
+	//
+	// 語彙スコアはクエリごとの候補集合内の最大値で割ってから合成に入れる。
+	// 🔴 この正規化が無いと加重和は機能しない。2026-09-02 の実測で
+	// lexical_score は 0.000〜0.0036（中央値 0.00016）、vector_score は
+	// 0.23〜0.74（中央値 0.44）とスケールが3桁違い、alpha=0.7 と alpha=1.0 で
+	// 順位が変わったクエリは 58 件中 1 件だけだった。
+	//
+	// この方式は alpha の契約（要件定義 F-4・OpenAPI）をそのまま保つ。
+	FusionWeightedSum Fusion = iota
+
+	// FusionRRF は順位融合（Reciprocal Rank Fusion）。
+	//
+	// スコアの値ではなく順位だけを使うので、スケールの違いが原理的に問題に
+	// ならない。⚠️ alpha はこの方式では重みとして意味を持たず、無視される。
+	//
+	// 🔴 これは計測のための実装である。alpha が効かない方式を既定にするのは
+	// 要件定義 F-4 と OpenAPI の契約を変えることなので、実測を見て ADR を
+	// 書くまで契約は触らない。
+	FusionRRF
+)
+
+// RRFK は RRF の平滑化定数 k。
+//
+// 🔴 掃引するときはここ1箇所を変える。既定 60 は RRF の原論文
+// (Cormack et al. 2009) が使った値で、この評価セットに合わせて選んだ値ではない。
+//
+// k が大きいほど上位の順位差が均され、小さいほど1位が強くなる。
+// ⚠️ 最適値はコーパスと候補集合の大きさに依存するので、60 を「調整済み」と
+// 読まないこと。alpha の 0.7 と同じ性質の数字である。
+const RRFK = 60
+
+// fusionWeightedSumName / fusionRRFName は方式の外部表現。
+//
+// 🔴 レポートとコマンドラインの両方でこの文字列を使う。表記が2つあると、
+// 「どの条件で測ったか」の記録と「どう指定したか」が食い違いうる。
+const (
+	fusionWeightedSumName = "weighted-sum"
+	fusionRRFName         = "rrf"
+)
+
+// String は方式の外部表現を返す。
+func (f Fusion) String() string {
+	switch f {
+	case FusionWeightedSum:
+		return fusionWeightedSumName
+	case FusionRRF:
+		return fusionRRFName
+	}
+
+	return fmt.Sprintf("unknown(%d)", int(f))
+}
+
+// ParseFusion は外部表現から方式を読む。
+//
+// 🔴 未知の文字列を既定へ黙って倒さない。綴り誤りが「既定で測った」結果として
+// 記録され、後から条件を取り違える。計測の条件は必ず明示的に決まること。
+func ParseFusion(name string) (Fusion, error) {
+	switch name {
+	case fusionWeightedSumName:
+		return FusionWeightedSum, nil
+	case fusionRRFName:
+		return FusionRRF, nil
+	}
+
+	return 0, fmt.Errorf("%w: %q (want %q or %q)",
+		errUnknownFusion, name, fusionWeightedSumName, fusionRRFName)
+}
+
+// FusionNames は指定できる方式の一覧を返す。
+//
+// コマンドラインの説明文に使う。関数で返すのは可変のパッケージ変数を
+// 作らないため (GO-007)。
+func FusionNames() []string {
+	return []string{fusionWeightedSumName, fusionRRFName}
+}
+
+// statement は方式に応じた SQL と、その方式が使う $8 の値を返す。
+//
+// 🔴 $8 は方式ごとに意味が違う（方式A は alpha、方式B は RRF の k）。
+// 番号を共有しているのは、参照されない引数があると PostgreSQL が型を決められず
+// Parse に失敗するためで、意味が同じだからではない。
+//
+// 🔴 switch は exhaustive linter が網羅を強制する。方式を足したのに SQL を
+// 足し忘れる、という形の抜けを lint で捕まえる。末尾の return は、範囲外の int を
+// Fusion に変換された場合の番人である (GO-003)。New が構築時に弾いているので
+// 通常はここに来ないが、番人が無いと「SQL が空文字」という読めない失敗になる。
+//
+// 🔑 Store ではなく Fusion のメソッドにしてあるのは、これが方式そのものの
+// 性質だからである。ストアの状態を1つも見ない。
+func (f Fusion) statement(alpha float32) (string, any, error) {
+	switch f {
+	case FusionWeightedSum:
+		return searchWeightedSumSQL, alpha, nil
+	case FusionRRF:
+		// alpha は使わない。重みを表す場所がこの方式には無い。
+		return searchRRFSQL, RRFK, nil
+	}
+
+	return "", nil, fmt.Errorf("%w: %d", errUnknownFusion, int(f))
+}
+
+// valid は方式が既知かを返す。
+func (f Fusion) valid() bool {
+	switch f {
+	case FusionWeightedSum, FusionRRF:
+		return true
+	}
+
+	return false
+}

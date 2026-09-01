@@ -6,6 +6,9 @@ import (
 
 	"github.com/hideyukiMORI/nene-recall/internal/chunk"
 	"github.com/hideyukiMORI/nene-recall/internal/embed"
+	"github.com/hideyukiMORI/nene-recall/internal/index"
+	"github.com/hideyukiMORI/nene-recall/internal/org"
+	"github.com/hideyukiMORI/nene-recall/internal/store/postgres"
 )
 
 // scoreTolerance は SQL(float8) と Go(float32) の丸め差の許容幅。
@@ -22,6 +25,17 @@ const scoreTolerance = 1e-6
 func hybridStore(t *testing.T) *testStore {
 	t.Helper()
 
+	ts := newTestStore(t, hybridEmbedder())
+	putHybridChunks(t, ts, mustOrgID(t, 1))
+
+	return ts
+}
+
+// hybridEmbedder はベクトルの近さと語彙の一致を逆向きにした偽の埋め込みを返す。
+//
+// 🔑 逆向きにしてあるのが要点である。同じ向きに揃えるとどちらのスコアが効いたのか
+// 区別がつかず、合成のテストが何も言わなくなる。
+func hybridEmbedder() *fakeEmbedder {
 	e := newFakeEmbedder("fake:1024")
 	e.angles["recall_store"] = 0
 	// ベクトル的に近いが、語彙は1つも重ならない。
@@ -29,25 +43,27 @@ func hybridStore(t *testing.T) *testStore {
 	// ベクトル的に遠いが、語彙は完全に重なる。
 	e.angles["recall_store lexical"] = 1.5
 
-	ts := newTestStore(t, e)
-	orgA := mustOrgID(t, 1)
+	return e
+}
+
+// putHybridChunks は hybridEmbedder と対になる2件を投入する。
+func putHybridChunks(t *testing.T, ts *testStore, orgID org.ID) {
+	t.Helper()
 
 	chunks := []chunk.Chunk{
 		newChunk(chunkSpec{
-			orgID: orgA, documentID: 1, sourceID: 10,
+			orgID: orgID, documentID: 1, sourceID: 10,
 			chunkIndex: 0, content: "vector neighbour",
 		}),
 		newChunk(chunkSpec{
-			orgID: orgA, documentID: 2, sourceID: 20,
+			orgID: orgID, documentID: 2, sourceID: 20,
 			chunkIndex: 0, content: "recall_store lexical",
 		}),
 	}
 
-	if _, err := ts.store.Put(t.Context(), orgA, chunks); err != nil {
+	if _, err := ts.store.Put(t.Context(), orgID, chunks); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-
-	return ts
 }
 
 // TestSearchBlendsVectorAndLexical は alpha で順位が入れ替わることを見る。
@@ -110,6 +126,13 @@ func TestSearchReportsBothScores(t *testing.T) {
 		t.Fatalf("Search: %v", err)
 	}
 
+	// 🔴 方式A の合成は「クエリ内の最大値で割った語彙スコア」を使う。最大値は
+	// 候補集合全体（org 内の全行）に対するもので、返ってきた上位 limit 件からは
+	// 一般には求められない。このテストは全行が返る大きさのストアを使っている
+	// ので、返った中の最大値が候補集合の最大値と一致する。
+	// ⚠️ この前提を崩す（limit より多い行を入れる）と、この検算は成り立たない。
+	maxLexical := maxLexicalScore(t, results)
+
 	var lexicalSeen bool
 
 	for _, r := range results {
@@ -121,16 +144,44 @@ func TestSearchReportsBothScores(t *testing.T) {
 			lexicalSeen = true
 		}
 
-		want := alpha*r.VectorScore + (1-alpha)*r.LexicalScore
+		want := alpha*r.VectorScore + (1-alpha)*normalizedLexical(r.LexicalScore, maxLexical)
 		if math.Abs(float64(r.Score-want)) > scoreTolerance {
-			t.Errorf("score = %v, want %v (= %v*%v + %v*%v)",
-				r.Score, want, alpha, r.VectorScore, 1-alpha, r.LexicalScore)
+			t.Errorf("score = %v, want %v (= %v*%v + %v*%v/%v)",
+				r.Score, want, alpha, r.VectorScore, 1-alpha, r.LexicalScore, maxLexical)
 		}
 	}
 
 	if !lexicalSeen {
 		t.Errorf("語彙スコアが全件 0 である。語彙経路が働いていない")
 	}
+}
+
+// maxLexicalScore は返ってきた結果の語彙スコアの最大値を返す。
+//
+// 結果が空、または全件 0 のときは 0 を返す（呼び出し側が 0 除算を避ける）。
+func maxLexicalScore(t *testing.T, results []index.Result) float32 {
+	t.Helper()
+
+	var highest float32
+	for _, r := range results {
+		if r.LexicalScore > highest {
+			highest = r.LexicalScore
+		}
+	}
+
+	return highest
+}
+
+// normalizedLexical は語彙スコアをクエリ内の最大値で割る。
+//
+// 最大値が 0 なら 0 を返す。SQL 側の COALESCE(... / NULLIF(max, 0), 0) と
+// 同じ規則で、テストが SQL の規則を写していることが読めるように分けてある。
+func normalizedLexical(score, highest float32) float32 {
+	if highest == 0 {
+		return 0
+	}
+
+	return score / highest
 }
 
 // TestSearchWithoutTokensFallsBackToVector は分割できる語が無いクエリを見る。
@@ -292,8 +343,11 @@ func TestSearchDoesNotLeakAcrossOrgsViaLexicalMatch(t *testing.T) {
 // 取り込み側だけを検査すると、分割器を差し替えた人は「取り込みは通るのに検索が
 // 構文エラーで落ちる」という遠い症状を見ることになる。
 func TestSearchRejectsBrokenTokensFromTheQuery(t *testing.T) {
-	ts := newTestStoreWith(t, newFakeEmbedder("fake:1024"),
-		brokenTokenizer{tokens: []string{"a|b"}})
+	ts := newTestStoreWith(t, storeSpec{
+		embedder:  newFakeEmbedder("fake:1024"),
+		tokenizer: brokenTokenizer{tokens: []string{"a|b"}},
+		fusion:    postgres.FusionWeightedSum,
+	})
 
 	_, err := ts.store.Search(t.Context(), newQuery(querySpec{
 		orgID: mustOrgID(t, 1), text: "何か", limit: 10, alpha: 0.7,

@@ -53,6 +53,13 @@ type Store struct {
 	tokenizer lexical.Tokenizer
 	// tokenizerID は構築時に固定する。理由は embedderID と同じ。
 	tokenizerID string
+	// fusion はベクトルと語彙のスコアを1つの順位にまとめる方式。
+	//
+	// 🔴 検索ごとではなくストアごとに決める。要件定義 Q-1/Q-3 を決着させる
+	// ための計測用のつまみであり、利用者が要求ごとに選ぶものではない
+	// （OpenAPI にこの項目は無い）。配線点が1回決めて、そのプロセスの全検索が
+	// 同じ条件で走る形にしてある。
+	fusion Fusion
 }
 
 // Open は DSN から接続プールを開き、実際に到達できることを確認する。
@@ -82,7 +89,11 @@ func Open(ctx context.Context, dsn string) (*sql.DB, error) {
 // 🔴 Tokenizer も識別子の空を構築時に弾く。tokenizer_id 列は空文字を拒否する
 // CHECK を持つので、空のまま進むと取り込みの瞬間に制約違反という分かりにくい
 // 形で落ちる。embedderID と同じ扱いにしてある。
-func New(db *sql.DB, e embed.Embedder, t lexical.Tokenizer) (*Store, error) {
+//
+// 🔴 融合方式も構築時に確かめる。Fusion は int なので範囲外の値を作ること自体は
+// 言語仕様上いつでもできる (GO-003)。検索のたびに失敗する構成を「起動はする」
+// 状態にしない。
+func New(db *sql.DB, e embed.Embedder, t lexical.Tokenizer, f Fusion) (*Store, error) {
 	if got := e.Dimensions(); got != vectorDimensions {
 		return nil, fmt.Errorf("%w: embedder %q produces %d, column is vector(%d)",
 			errEmbedderDimensions, e.ID(), got, vectorDimensions)
@@ -102,8 +113,21 @@ func New(db *sql.DB, e embed.Embedder, t lexical.Tokenizer) (*Store, error) {
 		return nil, fmt.Errorf("%w", errTokenizerID)
 	}
 
-	return &Store{db: db, embedder: e, embedderID: id, tokenizer: t, tokenizerID: tokenizerID}, nil
+	if !f.valid() {
+		return nil, fmt.Errorf("%w: %d", errUnknownFusion, int(f))
+	}
+
+	return &Store{
+		db: db, embedder: e, embedderID: id,
+		tokenizer: t, tokenizerID: tokenizerID, fusion: f,
+	}, nil
 }
+
+// Fusion はこのストアが使っている融合方式を返す。
+//
+// 🔑 計測レポートに条件を記録するために要る。どの方式で測ったかが残らない
+// レポートは、後から条件を特定できないので正本になれない (ADR 0013)。
+func (s *Store) Fusion() Fusion { return s.fusion }
 
 // Ping は DB へ到達できることを確かめる。/readyz から呼ぶ。
 func (s *Store) Ping(ctx context.Context) error {
