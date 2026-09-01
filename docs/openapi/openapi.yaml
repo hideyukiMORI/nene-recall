@@ -1,0 +1,296 @@
+openapi: 3.1.0
+info:
+  title: NeNe Recall API
+  version: 0.1.0
+  description: |
+    自己ホスト型の検索・取得サービス。チャンクを取り込み、
+    ベクトル類似度と語彙一致のハイブリッドで検索し、引用可能な chunk を返す。
+
+    - 全ての操作は `org_id` を必須とする（ADR 0003）。省略・空・0 は 400。
+    - レスポンスの `content` は Corpus 統合時には使わない。`chunk_id` で引き直す（ADR 0002）。
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080
+    description: ローカル開発
+
+tags:
+  - name: search
+  - name: chunks
+  - name: health
+
+paths:
+  /v1/search:
+    post:
+      tags: [search]
+      summary: チャンクを検索する
+      operationId: search
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SearchRequest' }
+      responses:
+        '200':
+          description: 検索結果（score 降順）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/chunks:
+    post:
+      tags: [chunks]
+      summary: チャンクを投入する（埋め込みはサーバ側で生成）
+      operationId: putChunks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutChunksRequest' }
+      responses:
+        '200':
+          description: 投入結果
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted, chunk_ids]
+                properties:
+                  accepted: { type: integer, description: 受理した件数 }
+                  chunk_ids:
+                    type: array
+                    items: { type: integer, format: int64 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/chunks/{chunk_id}:
+    delete:
+      tags: [chunks]
+      summary: チャンクを1件削除する
+      operationId: deleteChunk
+      parameters:
+        - name: chunk_id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: org_id
+          in: query
+          required: true
+          description: 必須。省略は 400（ADR 0003）
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        '204': { description: 削除した（対象が無くても 204） }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /v1/sources/{source_id}/chunks:
+    delete:
+      tags: [chunks]
+      summary: source 単位でチャンクを一括削除する
+      operationId: deleteChunksBySource
+      parameters:
+        - name: source_id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: org_id
+          in: query
+          required: true
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        '200':
+          description: 削除件数
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /healthz:
+    get:
+      tags: [health]
+      summary: 依存の状態を返す
+      operationId: healthz
+      responses:
+        '200':
+          description: 正常
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '503':
+          description: 依存に異常
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+  /readyz:
+    get:
+      tags: [health]
+      summary: 受け入れ可否
+      operationId: readyz
+      responses:
+        '200': { description: 受け入れ可能 }
+        '503': { description: 準備中または受け入れ不可 }
+
+components:
+  schemas:
+    SearchRequest:
+      type: object
+      required: [org_id, query]
+      properties:
+        org_id:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 必須。他 org のチャンクは決して返さない（ADR 0003）
+        query:
+          type: string
+          minLength: 1
+        limit:
+          type: integer
+          default: 10
+          minimum: 1
+          maximum: 100
+        alpha:
+          type: number
+          format: float
+          default: 0.7
+          minimum: 0
+          maximum: 1
+          description: |
+            合成の重み。`score = alpha * vector_score + (1 - alpha) * lexical_score`。
+            1.0 で純ベクトル、0.0 で純語彙。
+        filters:
+          $ref: '#/components/schemas/SearchFilters'
+
+    SearchFilters:
+      type: object
+      description: 任意の絞り込み。指定しなければ org 内の全チャンクが対象。
+      properties:
+        document_ids:
+          type: array
+          items: { type: integer, format: int64 }
+        source_ids:
+          type: array
+          items: { type: integer, format: int64 }
+
+    SearchResponse:
+      type: object
+      required: [results, embedder_id]
+      properties:
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/SearchResult' }
+        embedder_id:
+          type: string
+          example: voyage-4:1024
+          description: |
+            検索に使った埋め込みモデルの識別子。保存済みベクトルとの
+            互換判定に使う（ADR 0005）。
+        took_ms:
+          type: integer
+          description: 検索に要した時間（埋め込み API 往復を含む）
+
+    SearchResult:
+      type: object
+      required: [chunk_id, document_id, source_id, chunk_index, content, score]
+      properties:
+        chunk_id:
+          type: integer
+          format: int64
+          description: Corpus 統合時はこれで MySQL から本文を引き直す（ADR 0002）
+        document_id: { type: integer, format: int64 }
+        source_id: { type: integer, format: int64 }
+        chunk_index: { type: integer }
+        content:
+          type: string
+          description: |
+            単独運用ではこれをそのまま使う。
+            Corpus 統合時は使わない——本文の正は MySQL（ADR 0002）。
+        page_number: { type: [integer, 'null'] }
+        section_label: { type: [string, 'null'] }
+        score:
+          type: number
+          format: float
+          description: 合成スコア。float である理由は ADR 0006
+        vector_score:
+          type: number
+          format: float
+          description: ベクトル類似度（正規化済みベクトルの内積）
+        lexical_score:
+          type: number
+          format: float
+          description: 語彙一致スコア
+
+    PutChunksRequest:
+      type: object
+      required: [org_id, chunks]
+      properties:
+        org_id: { type: integer, format: int64, minimum: 1 }
+        chunks:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ChunkInput' }
+
+    ChunkInput:
+      type: object
+      required: [document_id, source_id, chunk_index, content]
+      properties:
+        chunk_id:
+          type: integer
+          format: int64
+          description: |
+            Corpus 由来の chunk を投入する場合は Corpus 側の id を渡す。
+            省略時は Recall が採番する。
+        document_id: { type: integer, format: int64 }
+        source_id: { type: integer, format: int64 }
+        chunk_index: { type: integer }
+        content: { type: string, minLength: 1 }
+        page_number: { type: [integer, 'null'] }
+        section_label: { type: [string, 'null'] }
+
+    Health:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, down]
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status: { type: string, enum: [ok, down] }
+              detail: { type: string }
+        embedder_id: { type: string }
+        chunk_count: { type: integer }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: org_id_required }
+            message: { type: string }
+
+  responses:
+    BadRequest:
+      description: リクエストが不正（`org_id` の欠落を含む）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unavailable:
+      description: 依存（埋め込みプロバイダ等）が利用できない
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }

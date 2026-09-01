@@ -1,0 +1,25 @@
+# ビルド成果物
+/bin/
+/recall
+*.exe
+
+# ローカルの永続データ
+*.db
+*.db-wal
+*.db-shm
+
+# 環境変数（API キーが入る。決してコミットしない）
+.env
+.env.*
+!.env.example
+
+# エディタ・OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Go
+/vendor/
+*.test
+*.out
