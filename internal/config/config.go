@@ -45,9 +45,10 @@ type Config struct {
 	EmbedDimensions int
 	// OllamaBaseURL は Embedder=ollama のときの接続先。RECALL_OLLAMA_URL。
 	//
-	// 既定が localhost でないのは、Ollama を Windows ネイティブで走らせるため。
-	// WSL の CUDA ユーザ空間ライブラリが未配置でも RTX 3090 を使える (ADR 0008)。
-	// WSL からホストを引く名前は環境で変わるので、明示指定を推奨する。
+	// 既定は localhost だが、想定構成では Ollama を Windows ネイティブで走らせるので
+	// 実際にはホスト側のアドレスを明示指定することになる。WSL の CUDA ユーザ空間
+	// ライブラリが未配置でも RTX 3090 をそのまま使えるのがその理由 (ADR 0008)。
+	// WSL からホストを引くアドレスは再起動で変わるため、既定に頼らず .env に書くこと。
 	OllamaBaseURL string
 	// VoyageAPIKey は VOYAGE_API_KEY から読む。Embedder=voyage のときだけ要る。
 	//
