@@ -33,6 +33,18 @@ type recordingOllama struct {
 	status int
 	// rawBody は非空ならそのまま返す（壊れた応答の再現に使う）。
 	rawBody string
+	// version は /api/version が返すランタイムの版。
+	version string
+	// tags は /api/tags が返すモデル一覧。
+	tags []fakeTag
+}
+
+// fakeTag は /api/tags の要素。実応答は details や size も持つが、
+// クライアントが見るのは名前と digest だけなので、そこだけを模す。
+type fakeTag struct {
+	Name   string `json:"name"`
+	Model  string `json:"model"`
+	Digest string `json:"digest"`
 }
 
 // newRecordingOllama は正常応答を返す偽サーバの状態を作る。
@@ -43,18 +55,34 @@ func newRecordingOllama() *recordingOllama {
 		respond: encodeIndexVectors,
 		status:  0,
 		rawBody: "",
+		version: "0.33.2",
+		tags: []fakeTag{
+			{Name: "other:latest", Model: "other:latest", Digest: strings.Repeat("a", 64)},
+			{Name: "fake-model:latest", Model: "fake-model:latest", Digest: strings.Repeat("b", 64)},
+		},
 	}
 }
 
-// ServeHTTP は /api/embed と /api/show に答える。
+// ServeHTTP は /api/embed・/api/show・/api/version・/api/tags に答える。
 func (o *recordingOllama) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if strings.HasSuffix(r.URL.Path, "/api/show") {
+	switch {
+	case strings.HasSuffix(r.URL.Path, "/api/show"):
 		o.shows++
+		// 🔴 実物の /api/show は digest を返さない（2026-09-01 実測）。
+		// 偽サーバでも返さないこと。返すと、digest を /api/show から取る
+		// 実装がテストだけ通ってしまう。
 		o.write(w, map[string]string{"model": "fake"})
-
-		return
+	case strings.HasSuffix(r.URL.Path, "/api/version"):
+		o.write(w, map[string]string{"version": o.version})
+	case strings.HasSuffix(r.URL.Path, "/api/tags"):
+		o.write(w, map[string][]fakeTag{"models": o.tags})
+	default:
+		o.serveEmbed(w, r)
 	}
+}
 
+// serveEmbed は /api/embed に答える。
+func (o *recordingOllama) serveEmbed(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Model string   `json:"model"`
 		Input []string `json:"input"`
