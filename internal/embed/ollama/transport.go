@@ -40,6 +40,32 @@ type errorResponse struct {
 	Error string `json:"error"`
 }
 
+// versionResponse は GET /api/version の応答。
+type versionResponse struct {
+	Version string `json:"version"`
+}
+
+// tagsResponse は GET /api/tags の応答。
+//
+// 取得済みモデルの一覧で、各要素が digest を持つ。/api/show には digest が
+// 無いので、モデルの同一性をこの経路でしか取れない（2026-09-01 実測）。
+type tagsResponse struct {
+	Models []tagModel `json:"models"`
+}
+
+// tagModel は /api/tags の要素のうち、照合と記録に使う項目だけ。
+//
+// 応答には details や size も入るが、取らない。使わない項目を写すと、
+// 上流の応答が変わったときに直す箇所だけが増える。
+type tagModel struct {
+	// Name は "bge-m3:latest" のようなタグ付きの名前。
+	Name string `json:"name"`
+	// Model は Name と同じ値が入ることが多いが、別に返る実装もあるため両方見る。
+	Model string `json:"model"`
+	// Digest は 64桁の16進。
+	Digest string `json:"digest"`
+}
+
 // marshalJSON は要求本文を JSON にする。
 func marshalJSON(payload any) ([]byte, error) {
 	body, err := json.Marshal(payload)
@@ -76,6 +102,30 @@ func (c *Client) post(ctx context.Context, path string, payload []byte) ([]byte,
 
 	// 本文を読み切ってから閉じる。読み取りと後始末の失敗をまとめて1つの error にする
 	// （errors.Join は nil を落とすので、どちらも成功したときだけ nil になる）。
+	body, readErr := io.ReadAll(resp.Body)
+	if err := errors.Join(readErr, resp.Body.Close()); err != nil {
+		return nil, 0, fmt.Errorf("%w: read response: %w", embed.ErrProviderUnavailable, err)
+	}
+
+	return body, resp.StatusCode, nil
+}
+
+// get は本文を持たない取得系のエンドポイントを叩く。
+//
+// post と同じくリトライしない。理由も同じで、失敗のほとんどは
+// 「Ollama が起動していない」「アドレスが変わった」という設定・運用の誤りである。
+func (c *Client) get(ctx context.Context, path string) ([]byte, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("%w: build request: %w", embed.ErrProviderUnavailable, err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("%w: %s: %w", embed.ErrProviderUnavailable, c.baseURL, err)
+	}
+
+	// 読み取りと後始末の失敗をまとめて1つの error にする（post と同じ扱い）。
 	body, readErr := io.ReadAll(resp.Body)
 	if err := errors.Join(readErr, resp.Body.Close()); err != nil {
 		return nil, 0, fmt.Errorf("%w: read response: %w", embed.ErrProviderUnavailable, err)

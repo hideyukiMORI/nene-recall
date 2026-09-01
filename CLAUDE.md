@@ -44,7 +44,7 @@ Go 製の自己ホスト型 検索・取得サービス。チャンクを取り�
 | フェーズ | 状態 |
 | --- | --- |
 | Phase 0 骨組み・設計判断 | ✅ 完了（2026-09-01） |
-| Phase 1 ローカル完結の検索 API | 🚧 着手（項目 1・2・3 完了。API が動く） |
+| Phase 1 ローカル完結の検索 API | 🚧 着手（項目 1・2・3・6 完了。API と `make eval` が動く） |
 | Phase 2 Corpus 統合 | 🔲 未着手 |
 
 **動くもの:** **全エンドポイント**。`/v1/chunks` の投入・削除、`/v1/search` のベクトル検索が
@@ -57,6 +57,10 @@ Go 製の自己ホスト型 検索・取得サービス。チャンクを取り�
 🔴 **動かないもの:** 語彙検索（Phase 1 項目4・5）。`lexical_score` は常に 0 で、
 合成は `alpha*vector` に縮退している。`RECALL_EMBEDDER=voyage` と `RECALL_STORE=sqlite` は
 起動時に sentinel エラーで失敗する（設定としては valid だが未実装）。
+
+🔴 **中身が無いもの: `testdata/eval/` はダミーである。** 評価ハーネス（`make eval`）は
+完成していて実際に数字を出すが、コーパスとクエリ注釈の**実データは施主の判断待ち**で、
+今あるのは形式を満たすだけのダミー4件・2クエリである。**この数字を品質の指標として読まないこと。**
 
 ### Phase 1 の残作業（着手順）
 
@@ -74,7 +78,10 @@ Go 製の自己ホスト型 検索・取得サービス。チャンクを取り�
    実行時検査・違反時の即エラー化の3つで支えている。詳細は `internal/store/postgres/searcher.go`
 4. **語彙検索** — 未決。Postgres の `tsvector` か Go 側 BM25 か（要件定義 Q-1）
 5. **ハイブリッド合成** — `alpha*vector + (1-alpha)*lexical`
-6. **評価** — `make eval`。`testdata/eval/` に日本語の正解セット。recall@k・MRR・p95（ADR 0009）
+6. ~~**評価**~~ — ✅ **ハーネスは完了**（ADR 0013）。`make eval` が recall@k・MRR・
+   p95（**埋め込み往復を含む／除く の両方**）を測り、`docs/benchmarks/data/` に
+   JSON レポートを書く。残るのは `testdata/eval/` の**実データ**（日本語の正解セット）で、
+   これは施主の判断待ちである。**着手する前に施主に確認すること**
 7. **実測と HNSW** — ベンチを取り `docs/benchmarks/` に記録してから索引を入れる。before/after を残す
 8. **SQLite ストア**（比較用）— `RECALL_STORE=sqlite`。同一データでの比較が成果物になる
 9. **CLI** — 個人利用の入口。`org_id` の既定値は**CLI 側に置く。サーバ側には置かない**
@@ -89,7 +96,20 @@ ollama pull bge-m3        # Windows 側で実行
 
 make check                # 🔴 提出前に必ず通す唯一のゲート。CI もこれを呼ぶ
 make run                  # .env が要る
+make eval                 # 検索品質の計測。.env・Ollama・PostgreSQL が要る
+                          # 例) make eval EVAL_LABEL=alpha-05 GPU_NOTE="他アプリが 5.7GB 使用中"
 ```
+
+🔴 **`make eval` は `make check` に含まれていない**（ADR 0013 Decision 5）。
+理由は2つ。(1) CI に Ollama も GPU も無く、偽 Embedder で recall を測っても評価にならない
+(2) 評価は「検査」ではなく**計測**で、`recall@10 = 0.83` は真偽ではない。数十クエリの指標に
+自動 fail の閾値を切ると1クエリ分のゆらぎで CI が赤くなる。
+**ただし決定的な部分は check に入っている**——`internal/eval` の指標計算とローダ、および
+**評価セットの整合性テスト**（`cmd/eval/dataset_test.go`）。⇒ 評価セットを壊すコミットは CI で落ちる。
+
+🔴 **`make build` の対象を `./cmd/eval` へ広げない**（施主決定）。`build` は成果物を作る
+ターゲットで、評価ランナーは開発者の道具である。コンパイル破壊は `go vet ./...` と
+`go test ./...` が既に検知する。
 
 🔴 **`make check` は Postgres の起動を前提にする**（2026-09-01 施主承認）。
 ストアのテストはモック SQL ではなく実 Postgres に対して走る。先に `docker compose up -d`
@@ -100,8 +120,15 @@ make run                  # .env が要る
 （NENE2 のテスト DB `nene2_test` が入っているので止められない）、Docker の転送が
 5432 を bind できない。5432 に戻すとネイティブ側へ繋がり、
 **「コンテナは healthy なのに SASL 認証失敗」**という辿りにくい壊れ方をする。
-理由の正本は `compose.yaml` のコメント。変更するときは `compose.yaml`・
-`.github/workflows/ci.yml`・`.env.example`・統合テストの DSN 定数の**4箇所を必ず同時に**直すこと。
+理由の正本は `compose.yaml` のコメント。変更するときは次の**5箇所を必ず同時に**直すこと。
+
+| # | 場所 |
+| --- | --- |
+| 1 | `compose.yaml` |
+| 2 | `.github/workflows/ci.yml` |
+| 3 | `.env.example` |
+| 4 | `internal/store/postgres/main_test.go`（統合テストの DSN 定数） |
+| 5 | **`cmd/eval/main.go`（評価用 DB `recall_eval` の DSN 定数）** ← 2026-09-01 に追加（ADR 0013） |
 
 `make check` の中身は fmt-check → vet → lint → conformance → test → cover-check →
 tidy-check → build。個別に走らせたいときだけ `make lint` `make test` 等を使う。
@@ -191,6 +218,28 @@ ADR 0007 の要点は「pgvector を選んだこと」ではなく「**測って
 生成は Recall のスコープ外（要件定義 §3.3）。
 
 **結果として、最も価値の高い検証が最も費用のかからない方法で行える。** この性質を壊さないこと。
+`internal/eval` は `embed` すら import しておらず、依存は `index`・`chunk`・`org` と標準ライブラリだけである。
+
+### 9. 評価の正解セットに `chunk_id` を書かない
+
+`chunks.id` は取り込みのたびに変わる採番（insert-only・再取り込みは `DeleteBySource` → `Put`）なので、
+正解注釈に書いた瞬間、その正解セットは**1回しか再現しない**。
+
+正解は評価セット側の安定キー `eval_key`（例 `"adr-0007#003"`）で持つ。採番 id への写像は
+`index.Writer.Put` が返す「入力と同じ順の id」から**実行時にメモリ上で**作られ、永続化されない。
+`Put` のこの契約を緩める変更は、評価ハーネスを静かに壊す。正本は ADR 0013。
+
+同じ理由で、評価コーパスを `docs/` から実行時に分割生成しないこと。文書を1文字直すだけで
+チャンク境界が動き、**人手で付けた注釈の参照先が黙って別のチャンクに移る**。
+
+### 10. 2系統の p95 を引き算で出さない
+
+`p95(埋め込みを除く)` を `p95(含む) - p95(埋め込み)` で求めない。異なる分布のパーセンタイル同士の
+差は「差の p95」ではなく、統計的に無意味である。`Store.SearchVector` で実測する。
+
+`SearchVector` は `index.Searcher` の契約に**入っていない**（計測のための口であって検索の契約ではない）。
+また `assertSameEmbedder` を省いていないのは、省くと系統2 だけ SELECT が1本ぶん軽くなり、
+2系統の差が「埋め込み往復ぶん」でなくなるからである。
 
 ---
 

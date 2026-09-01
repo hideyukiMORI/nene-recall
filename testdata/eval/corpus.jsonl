@@ -1,0 +1,7 @@
+# ⚠️ これは実データではない。ハーネスの整合性テストを動かすためのダミーである。
+# 実際の評価コーパスは施主の判断待ち（ADR 0013 の射程外）。
+# 差し替えるときはこのコメント行ごと置き換えること。
+{"eval_key":"sample-dummy#001","source":"sample-dummy","content":"ダミー本文1。これは実データではない。評価セットが入るまでの仮置きである。"}
+{"eval_key":"sample-dummy#002","source":"sample-dummy","content":"ダミー本文2。これは実データではない。評価セットが入るまでの仮置きである。"}
+{"eval_key":"sample-dummy#003","source":"sample-dummy","content":"ダミー本文3。これは実データではない。評価セットが入るまでの仮置きである。"}
+{"eval_key":"sample-dummy#004","source":"sample-dummy","content":"ダミーの紛れ込み。どのクエリの正解でもない。正解にならないチャンクが必要なので置いてある。"}

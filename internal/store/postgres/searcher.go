@@ -63,14 +63,7 @@ type scannedRow struct {
 
 // Search はベクトルの近い順にチャンクを返す。
 func (s *Store) Search(ctx context.Context, q index.Query) ([]index.Result, error) {
-	if err := validateQuery(q); err != nil {
-		return nil, err
-	}
-
-	// 🔴 検索の前にも確かめる。ここで WHERE embedder_id = $current と黙って
-	// 絞り込む実装にしないこと。不一致の行が「検索に出てこないだけ」になり、
-	// ADR 0005 が警告する静かな破損の変種になる。必ずエラーとして表面化させる。
-	if err := s.assertSameEmbedder(ctx, s.db); err != nil {
+	if err := s.prepareSearch(ctx, q); err != nil {
 		return nil, err
 	}
 
@@ -80,6 +73,56 @@ func (s *Store) Search(ctx context.Context, q index.Query) ([]index.Result, erro
 	}
 
 	return s.searchRows(ctx, q, vector)
+}
+
+// SearchVector は埋め込み済みのベクトルで検索する。
+//
+// q.Text は順位に使わないが、Search と同じく必須のままにしてある。
+// Search に渡すのと同一の index.Query をそのまま渡せることが、2系統の計測が
+// 同じ条件であることの前提だからである。
+//
+// 🔑 これは計測のための口である。ADR 0009 は p95 を「埋め込み往復を含む／除く
+// の両方」で測ることを要求しているが、Search は埋め込みと SQL を続けて実行する
+// ので DB 部分だけを分離できない。判断の記録は
+// docs/adr/0013-evaluation-harness-design.md にある。
+//
+// 🔴 index.Searcher の契約には足していない。「検索する」という契約の一部では
+// なく、計測の都合だからである。契約に入れると、すべてのストア実装（Phase 1
+// 項目8 の SQLite を含む）が計測の都合に付き合わされる。Ping を
+// embed.Embedder の契約に入れなかったのと同じ判断軸である。
+//
+// 🔴 SQL も事前検査も Search と共有する。特に assertSameEmbedder をここでも
+// 通すのは、省くと系統2 が SELECT を1本ぶんだけ軽くなり、2系統の差が
+// 「埋め込み往復ぶん」でなくなるためである。計測対象と本番経路が乖離したら
+// 計測の意味が無い。
+func (s *Store) SearchVector(
+	ctx context.Context, q index.Query, vector []float32,
+) ([]index.Result, error) {
+	if err := s.prepareSearch(ctx, q); err != nil {
+		return nil, err
+	}
+
+	// 渡されたベクトルも契約検査を通す。<#>（負の内積）は入力が正規化済みで
+	// あることに依存しており、外から受け取る経路をそこだけ緩めない。
+	if err := validateVector(vector); err != nil {
+		return nil, fmt.Errorf("%w: query vector", err)
+	}
+
+	return s.searchRows(ctx, q, encodeVector(vector))
+}
+
+// prepareSearch は DB へ本題を問い合わせる前の共通の検査。
+//
+// 🔴 検索の前にも埋め込みモデルの一致を確かめる。ここで
+// WHERE embedder_id = $current と黙って絞り込む実装にしないこと。
+// 不一致の行が「検索に出てこないだけ」になり、ADR 0005 が警告する静かな破損の
+// 変種になる。必ずエラーとして表面化させる。
+func (s *Store) prepareSearch(ctx context.Context, q index.Query) error {
+	if err := validateQuery(q); err != nil {
+		return err
+	}
+
+	return s.assertSameEmbedder(ctx, s.db)
 }
 
 // validateQuery は DB にも埋め込みにも触れずに分かる誤りを先に落とす。
