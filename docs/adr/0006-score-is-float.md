@@ -57,12 +57,35 @@ public function __construct(
 
 **追随作業**
 
-- Corpus レーンへ「`ChunkSearchResult::$score` を float に広げる」を依頼する。
-  Recall の Phase 2 着手前であればいつでもよい
+- ~~Corpus レーンへ「`ChunkSearchResult::$score` を float に広げる」を依頼する~~
+  → **✅ Corpus 側 済（2026-09-01・PR #385）**
+
+## 追記: Corpus 側の着地（2026-09-01）
+
+**`nene-corpus` PR #385 MERGED**（`mergedAt = 2026-09-01T08:35:33Z` / SHA `8befe998`）。
+指示書は `_work/handoff-corpus-2026-09-01-score-float-work-order.md`。
+
+origin/main で実測確認済み:
+
+| 箇所 | 着地後 |
+| --- | --- |
+| `src/Search/ChunkSearchResult.php` | `public float $score,` |
+| `src/Search/PdoChunkSearchRepository.php:83` | `score: (float) $row['relevance_score'],` |
+| `tests/Search/PdoChunkSearchRepositoryTest.php` | `assertSame(1.0 / 2.0 / 1.0, ...)` |
+| `tests/Search/SearchChunksUseCaseTest.php:38` | `score: 1.0` |
+
+PHPUnit 425/425（1,377 assertions）・PHPStan level8 no errors。**値は変わっていない。**
+
+🔑 **`assertSame` のまま `1.0` に直したこと自体が、型が広がった証拠になっている。**
+`1.0 === 1` は false なので、cast が効いていなければここで落ちる。
+`assertEquals`（緩い比較）へ逃げると**この性質が失われ、次に float が壊れても気づけない**。
+移行を「テストを緩めて通す」で済ませなかったのが、この作業の実質的な成果である。
+
+⇒ **Phase 2 の差し替え PR は、純粋にバックエンドの交換だけになった。**
 
 ## Related
 
-- Issue: なし
-- PR: なし
+- Issue: `nene-corpus#384`
+- PR: **`nene-corpus#385`（MERGED 2026-09-01・`8befe998`）**
 - Supersedes: none
 - Superseded by: none
