@@ -14,7 +14,7 @@
     },
     {
       "name": "particle",
-      "description": "内容語をほぼ共有し、助詞・格・方向だけが違う文。bigram 分割ではほぼ同一視される。原則として対で入れてあり、対の正解集合は交わらない（例 「Corpus が Recall を呼ぶ」と「Recall が Corpus を呼ぶ」）。"
+      "description": "内容語をほぼ共有し、助詞・格・方向だけが違う文。bigram 分割ではほぼ同一視される。原則として対で入れてある（例 「Corpus が Recall を呼ぶ」と「Recall が Corpus を呼ぶ」）。⚠️ 対の正解集合が必ず交わらないわけではない——両方向の答えを1チャンクが持つことがあり、q-024 / q-025 は requirements#008 を共有する。撃ち分けを交差なしで測れるのは q-057 / q-058（「Recall が落ちたら Corpus は」／「Corpus が落ちたら Recall は」）の対である。"
     },
     {
       "name": "compound",
