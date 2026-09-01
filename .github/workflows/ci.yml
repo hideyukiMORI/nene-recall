@@ -21,6 +21,12 @@ jobs:
     #    ここがずれた瞬間に「CI でしか落ちない」失敗が生まれる（QLT-003）。
     #    テスト側の DSN も同じ値を定数で持っている
     #    （internal/store/postgres の統合テスト）。
+    #
+    # 🔴 ホスト側ポートが 5433 なのは CI の都合ではない。ローカルで 5432 が
+    #    ネイティブ PostgreSQL に占有されていて使えないため（compose.yaml の
+    #    コメント参照）。CI 側に占有は無いが、テストが持つ DSN 定数を1つに
+    #    保つには CI もローカルと同じ 5433 で公開する必要がある。
+    #    「CI では空いているから 5432 でよい」と戻すと DSN が2つに割れる。
     services:
       db:
         image: pgvector/pgvector:pg17
@@ -29,7 +35,7 @@ jobs:
           POSTGRES_PASSWORD: recall
           POSTGRES_DB: recall
         ports:
-          - "5432:5432"
+          - "5433:5432"
         options: >-
           --health-cmd "pg_isready -U recall -d recall"
           --health-interval 5s
