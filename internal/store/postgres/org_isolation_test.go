@@ -1,10 +1,13 @@
 package postgres_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/hideyukiMORI/nene-recall/internal/chunk"
+	"github.com/hideyukiMORI/nene-recall/internal/index"
 	"github.com/hideyukiMORI/nene-recall/internal/org"
+	"github.com/hideyukiMORI/nene-recall/internal/store/postgres"
 )
 
 // 🔴 このファイルは ADR 0003 の追随作業「分離のテストを Phase 1 の最初に書く」
@@ -145,4 +148,60 @@ func TestSearchDoesNotCrossOrgs(t *testing.T) {
 	if got := results[0].Chunk.OrgID; got != orgA {
 		t.Errorf("結果の OrgID = %s, want %s", got, orgA)
 	}
+}
+
+// TestZeroOrgIsRejectedEverywhere は、未指定の org がどの入口でも error になることを見る。
+//
+// 🔴 これは QLT-006 が要求する「意図的な違反で検査が発火することの証明」である。
+// org.ID のゼロ値は言語仕様上どうやっても作れる（GO-003）ので、ここでは
+// 「作れてしまうこと」を前提に、届いた先で必ず落ちることを確かめている。
+//
+// 特に Search が重要である。DB の CHECK (org_id >= 1) に任せると一件も一致せず
+// 空の結果になり、呼び出し側からは「該当なし」と見分けがつかない。
+// 未指定は既定 org へのフォールバックでも空の結果でもなく error として扱う、
+// というのが ADR 0003 の要求である。
+func TestZeroOrgIsRejectedEverywhere(t *testing.T) {
+	ts := newTestStore(t, newFakeEmbedder("fake:1024"))
+
+	// 「org_id が無いとき」を表す ID は存在しない。テストのためだけに作る。
+	var zeroOrg org.ID
+
+	t.Run("Search は空の結果ではなく error を返す", func(t *testing.T) {
+		results, err := ts.store.Search(t.Context(), newQuery(querySpec{
+			orgID: zeroOrg, text: "問い", limit: 10, alpha: 1,
+			documentIDs: nil, sourceIDs: nil,
+		}))
+		if !errors.Is(err, index.ErrInvalidQuery) {
+			t.Fatalf("err = %v, want index.ErrInvalidQuery", err)
+		}
+
+		if len(results) != 0 {
+			t.Errorf("error と一緒に結果が返っている: %d 件", len(results))
+		}
+	})
+
+	t.Run("Put", func(t *testing.T) {
+		_, err := ts.store.Put(t.Context(), zeroOrg, []chunk.Chunk{
+			newChunk(chunkSpec{
+				orgID: zeroOrg, documentID: 1, sourceID: 1,
+				chunkIndex: 0, content: "本文",
+			}),
+		})
+		if !errors.Is(err, postgres.ErrOrgRequired()) {
+			t.Errorf("err = %v, want ErrOrgRequired", err)
+		}
+	})
+
+	t.Run("Delete", func(t *testing.T) {
+		if err := ts.store.Delete(t.Context(), zeroOrg, 1); !errors.Is(err, postgres.ErrOrgRequired()) {
+			t.Errorf("err = %v, want ErrOrgRequired", err)
+		}
+	})
+
+	t.Run("DeleteBySource", func(t *testing.T) {
+		_, err := ts.store.DeleteBySource(t.Context(), zeroOrg, 1)
+		if !errors.Is(err, postgres.ErrOrgRequired()) {
+			t.Errorf("err = %v, want ErrOrgRequired", err)
+		}
+	})
 }

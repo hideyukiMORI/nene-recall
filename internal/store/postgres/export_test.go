@@ -48,3 +48,6 @@ func ErrOrgMismatch() error { return errOrgMismatch }
 
 // ErrChunkIDNotAccepted は errChunkIDNotAccepted をテストへ公開する。
 func ErrChunkIDNotAccepted() error { return errChunkIDNotAccepted }
+
+// ErrOrgRequired は errOrgRequired をテストへ公開する。
+func ErrOrgRequired() error { return errOrgRequired }

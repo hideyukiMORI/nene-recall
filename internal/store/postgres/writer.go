@@ -61,8 +61,31 @@ func (s *Store) Put(ctx context.Context, orgID org.ID, chunks []chunk.Chunk) ([]
 	return s.insertChunks(ctx, pendingWrite{orgID: orgID, chunks: chunks, vectors: vectors})
 }
 
+// validateOrgID は分離条件が指定されていることを境界で確かめる。
+//
+// 🔴 DB の CHECK (org_id >= 1) に任せない。任せると失敗が「制約違反」という
+// 読み取れない形になり、Search 側に至っては「一件も一致しない」＝空の結果に
+// なって、呼び出し側からは「該当なし」と区別がつかなくなる。
+// ゼロ値がストアまで届くのは上流のバグであり、静かに飲み込むと単一テナントで
+// 開発している限り誰も気づかない。それが ADR 0003 の言う「症状を出さない」状態である。
+//
+// org.ID のゼロ値は言語仕様上どうやっても作れるので (GO-003)、境界で必ず検証してから
+// 内側へ渡す。この関数を「CHECK があるから不要」と考えて消さないこと。
+func validateOrgID(orgID org.ID) error {
+	if orgID < 1 {
+		return fmt.Errorf("%w: got %d", errOrgRequired, orgID.Int64())
+	}
+
+	return nil
+}
+
 // validateChunks は DB にも埋め込みにも触れずに分かる誤りを先に落とす。
 func validateChunks(orgID org.ID, chunks []chunk.Chunk) error {
+	// 分離条件から先に確かめる。何を書くかより、どのテナントに書くかが先である。
+	if err := validateOrgID(orgID); err != nil {
+		return err
+	}
+
 	if len(chunks) == 0 {
 		return fmt.Errorf("%w", errEmptyBatch)
 	}
@@ -191,6 +214,10 @@ func (s *Store) insertWithinTx(ctx context.Context, tx *sql.Tx, w pendingWrite) 
 // 対象ゼロを成功とするのは、削除の意味が「その状態にすること」であり、
 // 既にその状態なら要求は満たされているため。
 func (s *Store) Delete(ctx context.Context, orgID org.ID, chunkID int64) error {
+	if err := validateOrgID(orgID); err != nil {
+		return err
+	}
+
 	const stmt = `DELETE FROM chunks WHERE org_id = $1 AND id = $2`
 
 	if _, err := s.db.ExecContext(ctx, stmt, orgID.Int64(), chunkID); err != nil {
@@ -206,6 +233,10 @@ func (s *Store) Delete(ctx context.Context, orgID org.ID, chunkID int64) error {
 // 件数を返すのは、再取り込みが DeleteBySource → Put の2手順である以上、
 // 呼び出し側が「何を消したうえで入れ直したか」を記録できる必要があるため。
 func (s *Store) DeleteBySource(ctx context.Context, orgID org.ID, sourceID int64) (int, error) {
+	if err := validateOrgID(orgID); err != nil {
+		return 0, err
+	}
+
 	const stmt = `DELETE FROM chunks WHERE org_id = $1 AND source_id = $2`
 
 	result, err := s.db.ExecContext(ctx, stmt, orgID.Int64(), sourceID)

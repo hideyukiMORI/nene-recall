@@ -84,11 +84,22 @@ func (s *Store) Search(ctx context.Context, q index.Query) ([]index.Result, erro
 
 // validateQuery は DB にも埋め込みにも触れずに分かる誤りを先に落とす。
 //
-// OrgID をここで検査しないのは、境界（HTTP）で org.ParseID が既に拒否しており、
-// 「未指定の org」を index の層まで通す経路を作らないためである (ADR 0003)。
-// 仮にゼロ値が届いても org_id 列は CHECK (org_id >= 1) を持つので一件も一致せず、
-// 失敗する側に倒れる。
+// 🔴 OrgID を最初に見る。分離条件なので、他の何よりも先に確かめる。
+//
+// 「org_id 列の CHECK (org_id >= 1) が弾くから不要」ではない。それだと
+// 一件も一致しない＝空の結果になり、呼び出し側からは「該当なし」と区別がつかない。
+// 検索で最も危険な壊れ方は、まさにこの「静かに何も返さない」形である。
+// 未指定は既定 org へのフォールバックでもなく空の結果でもなく error として扱う、
+// というのが ADR 0003 の要求である (docs/adr/0003-org-id-is-mandatory.md)。
+//
+// 境界（HTTP）の org.ParseID が既に拒否しているが、org.ID のゼロ値は言語仕様上
+// どうやっても作れるので (GO-003)、ここでも検証する。ゼロ値がここまで届いたなら
+// 上流にバグがあるということで、それを隠さず表面化させる。
 func validateQuery(q index.Query) error {
+	if q.OrgID < 1 {
+		return fmt.Errorf("%w: org_id is required, got %d", index.ErrInvalidQuery, q.OrgID.Int64())
+	}
+
 	if q.Limit < 1 {
 		return fmt.Errorf("%w: limit must be at least 1, got %d", index.ErrInvalidQuery, q.Limit)
 	}

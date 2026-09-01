@@ -74,6 +74,14 @@ var errEmptyBatch = errors.New("postgres: no chunks to write")
 // 埋め込みを生成する前に弾いて、無駄な外部 I/O を避ける。
 var errEmptyContent = errors.New("postgres: chunk content is empty")
 
+// errOrgRequired は org の識別子が未指定（ゼロ値）のまま届いたことを表す。
+//
+// 🔴 DB の CHECK (org_id >= 1) に守らせない。制約に落とすと失敗が「制約違反」に
+// なり、呼び出し側は原因に辿り着けない。ゼロ値がここまで届いたということは
+// 上流にバグがあるということで、それを分かりにくい失敗で覆い隠さない。
+// 「org_id が無いとき」を表す ID は存在せず、未指定は error である (ADR 0003)。
+var errOrgRequired = errors.New("postgres: org id is required")
+
 // errOrgMismatch は Chunk.OrgID が引数の orgID と食い違うことを表す。
 //
 // 🔴 引数の orgID を唯一の正とし、食い違いを黙って上書きしない。
