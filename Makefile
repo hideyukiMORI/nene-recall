@@ -5,6 +5,7 @@
 #    「ローカルでは通ったのに CI で落ちた」を構造的に起こさないため。
 GO ?= go
 BIN := bin/recall
+EVAL_BIN := bin/eval
 COVER_OUT := coverage.out
 
 # 🔴 道具はバージョンを固定する。固定しないと、同じコードが日によって
@@ -16,7 +17,11 @@ GOVULNCHECK_VERSION := v1.7.0
 #    2026-09-01 時点の実測は 79.4%。この値は上げる方向にしか動かさない。
 MIN_COVERAGE := 75.0
 
-.PHONY: all check build run test cover cover-check vet fmt fmt-check lint conformance tidy tidy-check vuln tools clean
+# 評価レポートの書き出し先。EVAL_LABEL で条件に名前を付ける（alpha 掃きなど）。
+EVAL_LABEL ?= baseline
+EVAL_OUT ?= docs/benchmarks/data/$(shell date +%F)-eval-$(EVAL_LABEL).json
+
+.PHONY: all check build run test cover cover-check vet fmt fmt-check lint conformance tidy tidy-check vuln tools clean eval
 
 # 既定は完全なゲート。部分的な確認をしたいときだけ個別ターゲットを呼ぶ。
 all: check
@@ -26,6 +31,12 @@ check: fmt-check vet lint conformance test cover-check tidy-check build
 
 ## build — 🔴 CGO_ENABLED=0 は cgo 禁止（CLAUDE.md 地雷5）のコンパイル時強制である。
 ## cgo を要求する依存が紛れ込んだ瞬間にここで落ちる。
+##
+## 🔴 対象を ./cmd/eval へ広げない（施主決定・ADR 0013 Decision 10）。
+## build は「配布する成果物を作る」ターゲットであり、評価ランナーは開発者の道具で
+## あって成果物ではない。意味を変えないこと。
+## cmd/eval のコンパイル破壊なら check が既に検知する——go vet ./... と
+## go test ./... がどちらも全パッケージを通るので、埋めるべき穴が無い。
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -o $(BIN) ./cmd/recall
 
@@ -88,6 +99,34 @@ tools:
 	  echo "golangci-lint $(GOLANGCI_VERSION) を導入する"; \
 	  $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION); \
 	fi
+
+## eval — 検索品質を計測する（ADR 0009 / ADR 0013）
+##
+## 🔴 check に含めない。理由は2つある（ADR 0013 の Decision 5）。
+##   (1) CI に Ollama も GPU も無い。偽の Embedder で recall を測っても、
+##       それは偽の Embedder の性質を測っているだけで評価にならない
+##   (2) 評価は「検査」ではなく「計測」である。recall@10 = 0.83 は真でも偽でもない。
+##       ADR 0009 自身が「数十クエリで測った recall を過信するな」と書く粒度に
+##       自動 fail の閾値を切ると、1クエリ分のゆらぎで CI が赤くなる。
+##       赤が意味を持たなくなれば、ゲート全体の信頼が落ちる（QLT-002 が baseline を
+##       拒否したのと同じ理由）
+##
+## 🔑 ただし決定的で依存の無い部分は check に入っている。
+##   - internal/eval の指標計算とローダのユニットテスト
+##   - 評価セットの整合性テスト（cmd/eval/dataset_test.go）
+##   ⇒ 評価セットを壊すコミットは CI で落ちる。
+##
+## 前提: docker compose up -d（PostgreSQL）と Windows 側の Ollama、.env の設定。
+## 評価用 DB recall_eval は毎回作り直される（開発用の recall には触らない）。
+##
+## 🔴 go run ではなく go build してから走らせる。go run はバイナリに VCS 情報を
+## 埋めないので、vcs.revision が空になる（2026-09-01 実測）。どのコードで測った
+## 数字か分からないレポートは、後から検証できない。
+##
+## 例) make eval EVAL_LABEL=alpha-05 GPU_NOTE="他アプリが 5.7GB 使用中"
+eval:
+	CGO_ENABLED=0 $(GO) build -trimpath -o $(EVAL_BIN) ./cmd/eval
+	./$(EVAL_BIN) -out $(EVAL_OUT) -gpu-note "$(GPU_NOTE)"
 
 clean:
 	rm -rf bin $(COVER_OUT)

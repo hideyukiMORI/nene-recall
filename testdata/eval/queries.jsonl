@@ -1,0 +1,3 @@
+# ⚠️ これは実データではない。ハーネスの整合性テストを動かすためのダミーである。
+{"query_id":"dummy-1","text":"ダミーの問い1","relevant":["sample-dummy#001"],"tags":["語彙一致"],"note":"ダミー。実データではない。正解の根拠をここに書く。"}
+{"query_id":"dummy-2","text":"ダミーの問い2","relevant":["sample-dummy#002","sample-dummy#003"],"tags":["言い換え"],"note":"ダミー。複数正解の形を確かめるためだけの行である。"}
