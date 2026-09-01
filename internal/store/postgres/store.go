@@ -12,10 +12,23 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/hideyukiMORI/nene-recall/internal/embed"
+	"github.com/hideyukiMORI/nene-recall/internal/index"
 )
 
 // driverName は pgx が database/sql に登録するドライバ名。
 const driverName = "pgx"
+
+// queryer は *sql.DB と *sql.Tx が共通して持つ問い合わせ口。
+//
+// embedder_id の検査をトランザクションの内側（Put）と外側（Search）の両方から
+// 呼ぶために要る。database/sql はこの共通部分を型として提供していないので、
+// 必要な1メソッドだけを自前で宣言する。
+//
+// 引数が ...any なのは database/sql の署名をそのまま写しているからで、
+// 型を any で代用しているわけではない（GO-006 が禁じているのは後者）。
+type queryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
 
 // Store は pgvector を載せた PostgreSQL 上の索引。
 //
@@ -86,4 +99,31 @@ func (s *Store) Close() error {
 	}
 
 	return nil
+}
+
+// assertSameEmbedder は、保存済みの行がすべて現在の Embedder のものかを確かめる。
+//
+// 🔴 検索側で WHERE embedder_id = $current と黙って絞り込む実装にしないこと。
+// 不一致の行が「検索に出てこないだけ」になり、ADR 0005 が警告する静かな破損
+// （エラーにならないまま無意味な結果が返る）の変種になる。必ずエラーにする。
+//
+// 検査は org を跨いで全行を対象にする。「ストア全体が単一の埋め込み空間である」
+// という不変条件はテナントより上位の性質であり、org ごとに別のモデルを混ぜてよい
+// という意味ではないため。
+func (s *Store) assertSameEmbedder(ctx context.Context, q queryer) error {
+	const stmt = `SELECT embedder_id FROM chunks WHERE embedder_id <> $1 LIMIT 1`
+
+	var stored string
+
+	err := q.QueryRowContext(ctx, stmt, s.embedderID).Scan(&stored)
+
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil // 不一致の行が無い。空のストアもここに来る
+	case err != nil:
+		return fmt.Errorf("%w: embedder check: %s", errConnect, err.Error())
+	default:
+		return fmt.Errorf("postgres: stored=%s current=%s: %w",
+			stored, s.embedderID, index.ErrEmbedderMismatch)
+	}
 }

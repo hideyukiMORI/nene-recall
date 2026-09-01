@@ -24,6 +24,9 @@ type fakeEmbedder struct {
 	// kinds は渡された Kind の記録。取り込みと検索で正しく使い分けているかを見る
 	// （CLAUDE.md 地雷3: bge-m3 が無視する実装でも呼び出し側は必ず渡す）。
 	kinds *[]embed.Kind
+	// scale はベクトルの長さの倍率。1 以外にすると正規化の契約を破る実装になり、
+	// validateVector が実際に発火することを確かめられる。
+	scale float64
 }
 
 // newFakeEmbedder は既定の次元を持つ偽実装を作る。
@@ -33,6 +36,7 @@ func newFakeEmbedder(id string) *fakeEmbedder {
 		dims:   postgres.VectorDimensions,
 		angles: map[string]float64{},
 		kinds:  &[]embed.Kind{},
+		scale:  1,
 	}
 }
 
@@ -46,7 +50,7 @@ func (f *fakeEmbedder) Embed(_ context.Context, texts []string, kind embed.Kind)
 
 	out := make([][]float32, 0, len(texts))
 	for _, text := range texts {
-		out = append(out, planeVector(f.angles[text]))
+		out = append(out, scaleVector(planeVector(f.angles[text]), f.scale))
 	}
 
 	return out, nil
@@ -66,6 +70,19 @@ func planeVector(theta float64) []float32 {
 	v := make([]float32, postgres.VectorDimensions)
 	v[0] = float32(math.Cos(theta))
 	v[1] = float32(math.Sin(theta))
+
+	return v
+}
+
+// scaleVector は長さを倍率どおりに変える。scale が 1 なら何も変わらない。
+func scaleVector(v []float32, scale float64) []float32 {
+	if scale == 1 {
+		return v
+	}
+
+	for i := range v {
+		v[i] *= float32(scale)
+	}
 
 	return v
 }

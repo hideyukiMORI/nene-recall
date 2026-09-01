@@ -36,3 +36,15 @@ func ErrEmbedderDimensions() error { return errEmbedderDimensions }
 
 // ErrEmbedderID は errEmbedderID をテストへ公開する。
 func ErrEmbedderID() error { return errEmbedderID }
+
+// ErrEmptyBatch は errEmptyBatch をテストへ公開する。
+func ErrEmptyBatch() error { return errEmptyBatch }
+
+// ErrEmptyContent は errEmptyContent をテストへ公開する。
+func ErrEmptyContent() error { return errEmptyContent }
+
+// ErrOrgMismatch は errOrgMismatch をテストへ公開する。
+func ErrOrgMismatch() error { return errOrgMismatch }
+
+// ErrChunkIDNotAccepted は errChunkIDNotAccepted をテストへ公開する。
+func ErrChunkIDNotAccepted() error { return errChunkIDNotAccepted }

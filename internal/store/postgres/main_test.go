@@ -108,3 +108,29 @@ func recreateTestDatabase(t *testing.T) {
 		t.Fatalf("テスト用 DB を作れない: %v", err)
 	}
 }
+
+// attachStore は既にあるテスト用 DB に、別の Embedder でもう1つ Store を繋ぐ。
+//
+// モデルを切り替えた状況を作るために要る。newTestStore は DB を作り直すので、
+// 同じデータに対して別の Embedder を当てるにはこちらを使う。
+func attachStore(t *testing.T, e embed.Embedder) *postgres.Store {
+	t.Helper()
+
+	db, err := postgres.Open(t.Context(), testDSN)
+	if err != nil {
+		t.Fatalf("テスト用 DB へ接続できない: %v", err)
+	}
+
+	store, err := postgres.New(db, e)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+
+	return store
+}
