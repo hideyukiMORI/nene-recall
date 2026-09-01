@@ -91,9 +91,12 @@ func TestSearchBlendsVectorAndLexical(t *testing.T) {
 // 原因かを切り分けるためである（要件定義 §3）。合成後の値だけでは alpha の
 // 調整が当てずっぽうになる。
 //
-// 🔴 lexical_score が [0,1) に収まることも見る。ts_rank の正規化フラグ 32
-// （rank/(rank+1)）が外れると値域の上限が消え、alpha が「重み」ではなく
-// 「単位の変換係数」になる。合成が壊れても例外は出ないので、ここで縛る。
+// ⚠️ lexical_score の値域は縛らない。ts_rank の正規化フラグを 0 にした
+// （2026-09-02 の実測で長さ正規化が有害だったため）ので、上限は無い。
+// 🔑 有界かどうかは合成の正しさと無関係である——2026-09-02 の測定は、
+// [0,1) に押し込んでもスケールが3桁違えば加重和は機能しないことを示した
+// （lexical 中央値 0.00016 に対し vector 中央値 0.44）。
+// スケールを揃えるのは合成側の仕事であって、値域の上限の仕事ではない。
 func TestSearchReportsBothScores(t *testing.T) {
 	ts := hybridStore(t)
 
@@ -110,9 +113,8 @@ func TestSearchReportsBothScores(t *testing.T) {
 	var lexicalSeen bool
 
 	for _, r := range results {
-		if r.LexicalScore < 0 || r.LexicalScore >= 1 {
-			t.Errorf("lexical_score = %v が [0,1) の外にある（正規化フラグ 32 が効いていない）",
-				r.LexicalScore)
+		if r.LexicalScore < 0 {
+			t.Errorf("lexical_score = %v が負である", r.LexicalScore)
 		}
 
 		if r.LexicalScore > 0 {
