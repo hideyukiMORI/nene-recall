@@ -18,9 +18,10 @@
 単体で完結して動く。同時に、将来 [NeNe Corpus](https://github.com/hideyukiMORI/nene-corpus) の
 検索バックエンドとして環境変数ひとつで差し替えられる形を最初から取っている。
 
-> **Status: pre-alpha。** 骨組みと設計判断が固まった段階で、検索の実装はこれから。
-> API の形は `docs/openapi/openapi.yaml` に定義済みだが、`/v1/search` と `/v1/chunks` は
-> 現在 `501 Not Implemented` を返す。`org_id` の検証・設定の検証・`/healthz` は動作する。
+> **Status: alpha。** **ベクトル検索が動く。** `/v1/chunks` の投入・削除と `/v1/search` が
+> ローカルの bge-m3 + pgvector で実際に動作する。検索品質を測る `make eval` も動き、
+> ベクトル検索のみの基準線は `recall@10` **0.596**（259チャンク・58クエリの日本語評価セット）。
+> **語彙検索とハイブリッド合成（要件 F-4）は実装中**で、現在 `lexical_score` は常に 0。
 
 ---
 
