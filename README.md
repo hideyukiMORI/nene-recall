@@ -106,7 +106,8 @@ SearchChunksUseCase  ──▶  ChunkSearchRepositoryInterface   ← どちら�
 前提: Go 1.27+、Docker（または Postgres 17 + pgvector）、Ollama
 
 ```bash
-# 1. Postgres + pgvector を起動
+# 1. Postgres + pgvector を起動（make check の前提。テストは実 DB に対して走る）
+#    ホスト側ポートは 5433。5432 ではない（理由は compose.yaml のコメント）
 docker compose up -d
 
 # 2. Ollama に埋め込みモデルを引く（Windows 側で実行）
@@ -121,6 +122,8 @@ make run                  # 起動
 ```
 
 `make check` = fmt-check → vet → lint → conformance → test → cover-check → tidy-check → build。
+**Postgres が起動していることが前提**で、ストアのテストはモック SQL ではなく実 DB に対して走る。
+CI も同じイメージ・同じ資格情報の service container を立てて同じ `make check` を呼ぶ（QLT-003）。
 規則の正本は [`docs/coding-rules.md`](docs/coding-rules.md)、その設計判断は
 [ADR 0010](docs/adr/0010-strictness-is-mechanically-enforced.md)。
 

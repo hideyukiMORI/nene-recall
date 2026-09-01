@@ -44,24 +44,29 @@ Go 製の自己ホスト型 検索・取得サービス。チャンクを取り�
 | フェーズ | 状態 |
 | --- | --- |
 | Phase 0 骨組み・設計判断 | ✅ 完了（2026-09-01） |
-| Phase 1 ローカル完結の検索 API | 🔲 未着手 |
+| Phase 1 ローカル完結の検索 API | 🚧 着手（項目 1・3 完了） |
 | Phase 2 Corpus 統合 | 🔲 未着手 |
 
-**動くもの:** `/healthz`・`/readyz`・全エンドポイントの `org_id` 検証・設定の検証・graceful shutdown
-**動かないもの:** `/v1/search` と `/v1/chunks` 系は `501 Not Implemented`
+**動くもの:** `/healthz`・`/readyz`・全エンドポイントの `org_id` 検証・設定の検証・graceful shutdown。
+`internal/store/postgres` の投入・削除・ベクトル検索（実 Postgres に対する統合テスト付き）
+
+🔴 **動かないもの:** `/v1/search` と `/v1/chunks` 系は依然 `501 Not Implemented`。
+ストアは実装済みだが **`cmd` の配線と `httpapi` の差し替えがまだ**なので、HTTP からは届かない。
+ストアが動くこととエンドポイントが動くことは別である。
 
 ### Phase 1 の残作業（着手順）
 
-1. **Postgres ストア** — `internal/store/postgres`。ドライバは `jackc/pgx`（**純 Go**）。
-   スキーマ・マイグレーション・`vector(1024)` 列。**索引はまだ作らない**（ADR 0007）
+1. ~~**Postgres ストア**~~ — ✅ 完了。`internal/store/postgres`。`jackc/pgx` を
+   `pgx/v5/stdlib` 経由で `database/sql` として使う（ADR 0011）。DDL・自前の
+   マイグレーションランナー・`vector(1024)` 列・Writer。**ベクトル索引は作っていない**
+   （ADR 0007。`TestNoVectorIndexExists` が機械的に守っている）
 2. **Ollama 埋め込みクライアント** — `internal/embed/ollama.go`。`Embedder` を実装。
    🔴 **バッチで送れる形にすること**。230字のチャンクで **1本ずつ 11.8 件/秒 → 32本まとめて 87.8 件/秒＝8倍**
    （実測 `docs/benchmarks/2026-09-01-baseline.md`）。ナイーブに1チャンク1リクエストで書くと、
    10万件の取り込みが 18分から**2時間21分**になる。32本前後で頭打ちなので、それ以上大きくしても無駄
-3. **ベクトル検索** — pgvector の距離演算子。索引なしの全探索から。
-   🔑 bge-m3 のベクトルは **L2 正規化済み（ノルム実測 1.0）** なので `<=>`（コサイン）と `<#>`（内積）で
-   順位が一致し、`<#>` のほうが軽い。ただし**それは「入力が常に正規化されている」前提に依存する**——
-   `<#>` を採るなら正規化を Recall 側の責任にするか `Embedder` の契約に書くこと。黙って前提にしない
+3. ~~**ベクトル検索**~~ — ✅ 完了。索引なしの全探索。演算子は **`<#>`（負の内積）** を採用した。
+   前提（入力が常に正規化されている）は黙って置かず、`Embedder` の契約・`validateVector` の
+   実行時検査・違反時の即エラー化の3つで支えている。詳細は `internal/store/postgres/searcher.go`
 4. **語彙検索** — 未決。Postgres の `tsvector` か Go 側 BM25 か（要件定義 Q-1）
 5. **ハイブリッド合成** — `alpha*vector + (1-alpha)*lexical`
 6. **評価** — `make eval`。`testdata/eval/` に日本語の正解セット。recall@k・MRR・p95（ADR 0009）
@@ -80,6 +85,18 @@ ollama pull bge-m3        # Windows 側で実行
 make check                # 🔴 提出前に必ず通す唯一のゲート。CI もこれを呼ぶ
 make run                  # .env が要る
 ```
+
+🔴 **`make check` は Postgres の起動を前提にする**（2026-09-01 施主承認）。
+ストアのテストはモック SQL ではなく実 Postgres に対して走る。先に `docker compose up -d`
+を実行すること。DB が無いとテストは Skip し、カバレッジ下限を割って `make check` が落ちる。
+
+🔴 **DB のホスト側ポートは 5432 ではなく 5433。標準ポートに戻さないこと。**
+施主の WSL では 5432 を systemd 管理のネイティブ PostgreSQL 14 が占有しており
+（NENE2 のテスト DB `nene2_test` が入っているので止められない）、Docker の転送が
+5432 を bind できない。5432 に戻すとネイティブ側へ繋がり、
+**「コンテナは healthy なのに SASL 認証失敗」**という辿りにくい壊れ方をする。
+理由の正本は `compose.yaml` のコメント。変更するときは `compose.yaml`・
+`.github/workflows/ci.yml`・`.env.example`・統合テストの DSN 定数の**4箇所を必ず同時に**直すこと。
 
 `make check` の中身は fmt-check → vet → lint → conformance → test → cover-check →
 tidy-check → build。個別に走らせたいときだけ `make lint` `make test` 等を使う。

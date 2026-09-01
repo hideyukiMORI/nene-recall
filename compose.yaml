@@ -9,8 +9,22 @@ services:
       POSTGRES_USER: recall
       POSTGRES_PASSWORD: recall
       POSTGRES_DB: recall
+    # 🔴 ホスト側は 5432 ではなく 5433 で公開する。標準ポートに戻さないこと。
+    #
+    # 施主の WSL では 127.0.0.1:5432 を systemd 管理のネイティブ
+    # PostgreSQL 14 が占有しており（enabled・常時起動）、そこには NENE2 の
+    # テスト DB (nene2_test) が入っている。止めると他リポのテストが壊れるので、
+    # 5432 は空けられない。
+    #
+    # このとき Docker の転送は 5432 を bind できず、localhost:5432 への接続は
+    # すべてネイティブ PG14 に届く。PG14 に recall ロールは無いので、症状は
+    # 「コンテナは healthy なのに SASL 認証失敗」という辿りにくい形になる。
+    #
+    # 🔴 変更するときは .github/workflows/ci.yml・.env.example・
+    #    internal/store/postgres の統合テストの DSN 定数を必ず一緒に直すこと。
+    #    4箇所が同じ DSN であることが QLT-003（ローカルと CI は同一）の前提。
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
