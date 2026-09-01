@@ -553,6 +553,14 @@ func (s session) logSummary(report eval.Report) {
 		slog.Float64("recall_at_5", eval.RecallValueAt(summary.Recall, 5)),
 		slog.Float64("recall_at_10", eval.RecallValueAt(summary.Recall, 10)),
 		slog.Float64("mrr", summary.MRR),
+		// 🔴 alpha を必ず出す。掃引しているときに、どの条件の数字を見ているのか
+		// 端末の出力だけで分からないと取り違える。
+		slog.Float64("alpha", float64(report.Conditions.Alpha)),
+		// micro は正解チャンク単位の内訳。クエリ単位のマクロ平均とは別物で、
+		// 「どのチャンクが拾えていないか」を見るにはこちらが要る。
+		slog.Float64("micro_recall", summary.MicroRecall.Value),
+		// 名指しの長文 gold がどれだけ拾えたか。Q-1 の交絡要因の見張りである。
+		slog.Float64("long_chunk_recall", summary.LongChunkRecall.Value),
 		slog.Float64("p95_with_embedding_ms", summary.Latency.WithEmbedding.P95MS),
 		slog.Float64("p95_without_embedding_ms", summary.Latency.WithoutEmbedding.P95MS),
 		slog.String("model_digest", report.Environment.ModelDigest),

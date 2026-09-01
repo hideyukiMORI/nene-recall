@@ -21,6 +21,16 @@ MIN_COVERAGE := 75.0
 EVAL_LABEL ?= baseline
 EVAL_OUT ?= docs/benchmarks/data/$(shell date +%F)-eval-$(EVAL_LABEL).json
 
+# 掃引のための条件。空なら cmd/eval の既定に任せる
+# （alpha は RECALL_DEFAULT_ALPHA、rounds は eval.DefaultRounds）。
+#
+# 🔴 空のときにフラグ自体を渡さないこと。-alpha "" は解釈できず、
+# -alpha 0 との区別もつかない。既定に任せることと 0 を指定することは別物である
+# （alpha=0 は純語彙という意味のある条件で、Q-3 の掃引で実際に使う）。
+EVAL_ALPHA ?=
+EVAL_ROUNDS ?=
+EVAL_FLAGS := $(if $(EVAL_ALPHA),-alpha $(EVAL_ALPHA)) $(if $(EVAL_ROUNDS),-rounds $(EVAL_ROUNDS))
+
 .PHONY: all check build run test cover cover-check vet fmt fmt-check lint conformance tidy tidy-check vuln tools clean eval
 
 # 既定は完全なゲート。部分的な確認をしたいときだけ個別ターゲットを呼ぶ。
@@ -123,10 +133,15 @@ tools:
 ## 埋めないので、vcs.revision が空になる（2026-09-01 実測）。どのコードで測った
 ## 数字か分からないレポートは、後から検証できない。
 ##
-## 例) make eval EVAL_LABEL=alpha-05 GPU_NOTE="他アプリが 5.7GB 使用中"
+## 例) make eval EVAL_LABEL=alpha-05 EVAL_ALPHA=0.5 GPU_NOTE="他アプリが 5.7GB 使用中"
+##     make eval EVAL_LABEL=alpha-00 EVAL_ALPHA=0   （純語彙）
+##     make eval EVAL_LABEL=alpha-10 EVAL_ALPHA=1   （純ベクトル・基準線と同条件）
+##
+## 🔴 条件を変えたら EVAL_LABEL も変えること。同じ名前で上書きすると、
+## 前の条件のレポートが消えて before/after を並べられなくなる。
 eval:
 	CGO_ENABLED=0 $(GO) build -trimpath -o $(EVAL_BIN) ./cmd/eval
-	./$(EVAL_BIN) -out $(EVAL_OUT) -gpu-note "$(GPU_NOTE)"
+	./$(EVAL_BIN) -out $(EVAL_OUT) -gpu-note "$(GPU_NOTE)" $(EVAL_FLAGS)
 
 clean:
 	rm -rf bin $(COVER_OUT)

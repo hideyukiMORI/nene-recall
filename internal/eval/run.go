@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hideyukiMORI/nene-recall/internal/chunk"
 	"github.com/hideyukiMORI/nene-recall/internal/index"
@@ -41,6 +42,31 @@ const WarmupRounds = 1
 // (docs/adr/0009-retrieval-evaluation-is-in-scope.md)。
 const alphaNote = "not tuned: alpha is a placeholder until this evaluation settles it " +
 	"(requirements Q-3 / ADR 0009). Do not read this value as calibrated."
+
+// GoldLengthThreshold は gold チャンクを長短に分ける文字数の閾値。
+//
+// 🔑 520 は評価セット自身が分割に使っている値である
+// (testdata/eval/README.md: 単独で 520字を超えるブロックはそのまま1チャンクに
+// なり、26件が該当する)。閾値を独自に決めると、内訳が評価セットの構造と
+// 対応しなくなって読めなくなる。
+const GoldLengthThreshold = 520
+
+// LongGoldKeys は名指しで追跡する長文 gold チャンクを返す。
+//
+// 🔑 評価セットの偏りは「長い chunk が多い」ではなく「特定の3つが繰り返し
+// 正解になっている」という形をしている。readme#005 は 1,136字で5クエリの、
+// requirements#023 は 564字で5クエリの、requirements#008 は 611字で5クエリの
+// 正解である (testdata/eval/README.md「既知の性質」)。長さの区分だけでは
+// この偏りが見えないので、3件を名指しで追う。
+//
+// 🔴 評価セットを作り直したらこの一覧を見直すこと。存在しないキーになっても
+// 計測は止まらず、レポートの runes が 0 になって表面化する（止めないのは、
+// 付帯情報の欠落で計測そのものを失うほうが損だからである）。
+//
+// 関数で返すのは可変のパッケージ変数を作らないため (GO-007)。
+func LongGoldKeys() []string {
+	return []string{"readme#005", "requirements#023", "requirements#008"}
+}
 
 // KValues は recall@k を出す k の一覧。
 //
@@ -134,7 +160,7 @@ type plan struct {
 
 // roundResult は1ラウンドぶんの計測結果。
 type roundResult struct {
-	ranked           []string
+	ranked           []RankedEntry
 	withEmbedding    time.Duration
 	withoutEmbedding time.Duration
 }
@@ -174,7 +200,7 @@ func (r *Runner) Measure(ctx context.Context, ds Dataset, opts Options) (Measure
 	return Measurement{
 		Conditions: opts.conditions(),
 		Queries:    reports,
-		Summary:    summarize(reports),
+		Summary:    summarize(reports, goldRunes(ds.Passages)),
 	}, nil
 }
 
@@ -197,14 +223,17 @@ func (o Options) validate() error {
 // conditions は計測条件をレポートの形にする。
 func (o Options) conditions() Conditions {
 	return Conditions{
-		OrgID:            o.OrgID,
-		Alpha:            o.Alpha,
-		AlphaNote:        alphaNote,
-		Limit:            o.Limit,
-		Rounds:           o.Rounds,
-		WarmupRounds:     WarmupRounds,
-		KValues:          KValues(),
-		PercentileMethod: PercentileMethod,
+		OrgID:        o.OrgID,
+		Alpha:        o.Alpha,
+		AlphaNote:    alphaNote,
+		Limit:        o.Limit,
+		Rounds:       o.Rounds,
+		WarmupRounds: WarmupRounds,
+		KValues:      KValues(),
+
+		GoldLengthThresholdRunes: GoldLengthThreshold,
+		LongChunkKeys:            LongGoldKeys(),
+		PercentileMethod:         PercentileMethod,
 	}
 }
 
@@ -353,7 +382,7 @@ func (r *Runner) measureQueries(ctx context.Context, p plan) ([]QueryReport, err
 func (r *Runner) measureQuery(ctx context.Context, p plan, i int) (QueryReport, error) {
 	latencies := make([]RoundLatency, 0, p.opts.Rounds)
 
-	var ranked []string
+	var ranked []RankedEntry
 
 	for round := 1; round <= p.opts.Rounds; round++ {
 		result, err := r.runRound(ctx, p, i)
@@ -393,19 +422,25 @@ func (r *Runner) runRound(ctx context.Context, p plan, i int) (roundResult, erro
 		return roundResult{}, err
 	}
 
-	rankedIncluded, err := rankedKeys(included, p.keys)
+	rankedIncluded, err := rankedEntries(included, p.keys)
 	if err != nil {
 		return roundResult{}, err
 	}
 
-	rankedExcluded, err := rankedKeys(excluded, p.keys)
+	rankedExcluded, err := rankedEntries(excluded, p.keys)
 	if err != nil {
 		return roundResult{}, err
 	}
 
-	if !slices.Equal(rankedIncluded, rankedExcluded) {
+	// 🔴 突き合わせるのは順位（eval_key の並び）だけで、スコアの値は比べない。
+	// 系統1 は Search が内部で埋め込んだベクトル、系統2 は計測の外で1回だけ
+	// 埋め込んだベクトルを使う。同じモデル・同じ入力なので実際には一致するが、
+	// 浮動小数の最下位ビットまで一致することを契約にすると、この検査は
+	// 「2系統が同じ順位を返すか」ではなく「埋め込みがビット単位で再現するか」を
+	// 測る別のものに変わってしまう。守りたいのは前者である。
+	if !slices.Equal(RankedKeysOf(rankedIncluded), RankedKeysOf(rankedExcluded)) {
 		return roundResult{}, fmt.Errorf("%w: with embedding %v, without embedding %v",
-			ErrRankingDiverged, rankedIncluded, rankedExcluded)
+			ErrRankingDiverged, RankedKeysOf(rankedIncluded), RankedKeysOf(rankedExcluded))
 	}
 
 	return roundResult{
@@ -445,13 +480,17 @@ func timedSearchVector(
 	return results, elapsed, nil
 }
 
-// rankedKeys は検索結果を eval_key の並びにする。
+// rankedEntries は検索結果を eval_key とスコアの並びにする。
 //
 // 🔴 写像に無い id が返ってきたら止める。評価コーパス以外の行が混ざっている
 // ということで、その行は順位を汚染する。評価専用 DB を毎回作り直すのは、
 // まさにここが発火しない状態を作るためである (ADR 0013)。
-func rankedKeys(results []index.Result, keys map[int64]string) ([]string, error) {
-	out := make([]string, 0, len(results))
+//
+// 🔑 スコアを2つに分けたまま運ぶ。合成後の値だけを残すと、外した原因が
+// ベクトル側か語彙側かを後から切り分けられず、alpha (Q-3) と語彙手法 (Q-1) の
+// 判断が当てずっぽうになる。
+func rankedEntries(results []index.Result, keys map[int64]string) ([]RankedEntry, error) {
+	out := make([]RankedEntry, 0, len(results))
 
 	for _, result := range results {
 		key, known := keys[result.Chunk.ID]
@@ -460,24 +499,62 @@ func rankedKeys(results []index.Result, keys map[int64]string) ([]string, error)
 				ErrMeasure, result.Chunk.ID)
 		}
 
-		out = append(out, key)
+		out = append(out, RankedEntry{
+			Key:          key,
+			Score:        float64(result.Score),
+			VectorScore:  float64(result.VectorScore),
+			LexicalScore: float64(result.LexicalScore),
+		})
 	}
 
 	return out, nil
 }
 
+// RankedKeysOf は順位の並びから eval_key だけを取り出す。
+//
+// 指標の計算（RecallAt・RankOf・ReciprocalRank）は eval_key の並びだけを見る。
+// スコアは診断のための生データであって、指標の定義には入らない。
+//
+// 🔑 公開しているのは、レポートの生データから集計値を再計算する側がこれを
+// 要るためである。RecallAt などが []string を受け取る以上、スコア付きの並びを
+// 鍵の並びに落とす手順もレポートを読む側から見えていなければならない
+// (ADR 0013 Decision 7)。
+func RankedKeysOf(entries []RankedEntry) []string {
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, entry.Key)
+	}
+
+	return out
+}
+
+// goldRunes は eval_key からコーパス上の文字数を引く表を作る。
+//
+// 🔑 文字数はバイト数ではなくルーン数で数える。評価セットの README が
+// 「平均327字・最大1,136字」と書いているのはこの数え方であり、
+// 閾値 520 もその数え方の上で決まっている。
+func goldRunes(passages []Passage) map[string]int {
+	runes := make(map[string]int, len(passages))
+	for _, p := range passages {
+		runes[p.Key] = utf8.RuneCountInString(p.Content)
+	}
+
+	return runes
+}
+
 // newQueryReport は1クエリぶんの生データと指標を組み立てる。
-func newQueryReport(q Query, ranked []string, latencies []RoundLatency) QueryReport {
+func newQueryReport(q Query, ranked []RankedEntry, latencies []RoundLatency) QueryReport {
 	ks := KValues()
+	keys := RankedKeysOf(ranked)
 
 	recalls := make([]RecallAtK, 0, len(ks))
 	for _, k := range ks {
-		recalls = append(recalls, RecallAtK{K: k, Value: RecallAt(ranked, q.Relevant, k)})
+		recalls = append(recalls, RecallAtK{K: k, Value: RecallAt(keys, q.Relevant, k)})
 	}
 
 	ranks := make([]RelevantRank, 0, len(q.Relevant))
 	for _, key := range q.Relevant {
-		ranks = append(ranks, RelevantRank{Key: key, Rank: RankOf(ranked, key)})
+		ranks = append(ranks, RelevantRank{Key: key, Rank: RankOf(keys, key)})
 	}
 
 	return QueryReport{
@@ -488,7 +565,7 @@ func newQueryReport(q Query, ranked []string, latencies []RoundLatency) QueryRep
 		RankedKeys:     ranked,
 		RelevantRanks:  ranks,
 		Recall:         recalls,
-		ReciprocalRank: ReciprocalRank(ranked, q.Relevant),
+		ReciprocalRank: ReciprocalRank(keys, q.Relevant),
 		Latencies:      latencies,
 	}
 }
@@ -498,13 +575,16 @@ func newQueryReport(q Query, ranked []string, latencies []RoundLatency) QueryRep
 // 🔑 集計は必ず QueryReport から計算する。内部にだけある値を使わないので、
 // レポートを読んだ第三者が同じ手順で再計算できる。これが
 // 「後から検証できない数字は正本になれない」への回答である (ADR 0013)。
-func summarize(reports []QueryReport) Summary {
+func summarize(reports []QueryReport, runes map[string]int) Summary {
 	return Summary{
-		QueryCount: len(reports),
-		Recall:     meanRecall(reports),
-		MRR:        meanReciprocalRank(reports),
-		Latency:    summarizeLatency(reports),
-		TagRecall:  summarizeTags(reports),
+		QueryCount:       len(reports),
+		Recall:           meanRecall(reports),
+		MRR:              meanReciprocalRank(reports),
+		Latency:          summarizeLatency(reports),
+		TagRecall:        summarizeTags(reports),
+		MicroRecall:      summarizeMicro(reports),
+		GoldLengthRecall: summarizeGoldLength(reports, runes),
+		LongChunkRecall:  summarizeLongChunks(reports, runes),
 	}
 }
 

@@ -78,12 +78,12 @@ func TestMeasureMapsResultsBackToEvalKeys(t *testing.T) {
 	}
 
 	wantFirst := []string{"doc-a#001", "doc-a#002"}
-	if !equalStrings(got.Queries[0].RankedKeys, wantFirst) {
+	if !equalStrings(eval.RankedKeysOf(got.Queries[0].RankedKeys), wantFirst) {
 		t.Errorf("q-1 の順位 = %v, want %v", got.Queries[0].RankedKeys, wantFirst)
 	}
 
 	wantSecond := []string{"doc-a#002", "doc-b#001"}
-	if !equalStrings(got.Queries[1].RankedKeys, wantSecond) {
+	if !equalStrings(eval.RankedKeysOf(got.Queries[1].RankedKeys), wantSecond) {
 		t.Errorf("q-2 の順位 = %v, want %v", got.Queries[1].RankedKeys, wantSecond)
 	}
 }
@@ -405,8 +405,8 @@ func TestSummaryIsRecomputableFromTheRawData(t *testing.T) {
 	var recalls, ranks []float64
 
 	for _, q := range got.Queries {
-		recalls = append(recalls, eval.RecallAt(q.RankedKeys, q.Relevant, 10))
-		ranks = append(ranks, eval.ReciprocalRank(q.RankedKeys, q.Relevant))
+		recalls = append(recalls, eval.RecallAt(eval.RankedKeysOf(q.RankedKeys), q.Relevant, 10))
+		ranks = append(ranks, eval.ReciprocalRank(eval.RankedKeysOf(q.RankedKeys), q.Relevant))
 	}
 
 	if want := eval.Mean(recalls); recallAt(t, got.Summary.Recall, 10) != want {
