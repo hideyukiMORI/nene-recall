@@ -1,0 +1,4978 @@
+{
+  "schema": "nene-recall/eval-report/v1",
+  "measured_at": "2026-09-01T23:23:48+09:00",
+  "environment": {
+    "git_revision": "70a4c0408046aa4239cd34c86f9a973f485efedb",
+    "git_modified": false,
+    "go_version": "go1.27.0",
+    "embedder_id": "bge-m3:1024",
+    "ollama_version": "0.33.2",
+    "model_digest": "7907646426070047a77226ac3e684fbbe8410524f7b4a74d02837e43f2146bab",
+    "postgres_version": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+    "pgvector_version": "0.8.6",
+    "gpu_note": "他アプリと共有・占有ベンチではない"
+  },
+  "inputs": {
+    "corpus": {
+      "path": "testdata/eval/corpus.jsonl",
+      "sha256": "955607918e3853c48f19d0d8b8947cf03be63623d111b4e5ff7e24dd173b45eb",
+      "count": 259
+    },
+    "queries": {
+      "path": "testdata/eval/queries.jsonl",
+      "sha256": "b37194b6579ac1eac03cb04092c02122cc9cce0f4e443776f686bbe99262d9d8",
+      "count": 56
+    },
+    "tags": {
+      "path": "testdata/eval/tags.json",
+      "sha256": "a8ba98a109410a88f9152bcb2ec0da041e48f4a91501d7648ac2c69e3e814416",
+      "count": 8
+    }
+  },
+  "conditions": {
+    "org_id": 1,
+    "alpha": 0.7,
+    "alpha_note": "not tuned: alpha is a placeholder until this evaluation settles it (requirements Q-3 / ADR 0009). Do not read this value as calibrated.",
+    "limit": 10,
+    "rounds": 5,
+    "warmup_rounds": 1,
+    "k_values": [
+      1,
+      5,
+      10
+    ],
+    "percentile_method": "nearest-rank: sorted[ceil(p/100*n)-1], 1-indexed, no interpolation"
+  },
+  "queries": [
+    {
+      "query_id": "q-001",
+      "text": "pgvector 0.8.6",
+      "tags": [
+        "exact-term"
+      ],
+      "relevant": [
+        "bench-embed#001"
+      ],
+      "ranked_keys": [
+        "adr-0011#004",
+        "adr-0007#008",
+        "bench-embed#008",
+        "bench-embed#003",
+        "adr-0007#003",
+        "claude-md#010",
+        "readme#009",
+        "readme#000",
+        "adr-0011#011",
+        "adr-0007#001"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "bench-embed#001",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0
+        },
+        {
+          "k": 10,
+          "value": 0
+        }
+      ],
+      "reciprocal_rank": 0,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 51.713493,
+          "without_embedding_ms": 2.533632
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 57.857312,
+          "without_embedding_ms": 2.276919
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 62.23354,
+          "without_embedding_ms": 3.972607
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 66.367256,
+          "without_embedding_ms": 3.393276
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 63.542308,
+          "without_embedding_ms": 3.179666
+        }
+      ]
+    },
+    {
+      "query_id": "q-002",
+      "text": "`\u003c#\u003e` 演算子は何を計算するのか",
+      "tags": [
+        "exact-term"
+      ],
+      "relevant": [
+        "bench-embed#003",
+        "claude-md#008",
+        "adr-0011#003"
+      ],
+      "ranked_keys": [
+        "adr-0013#019",
+        "adr-0011#003",
+        "adr-0013#008",
+        "adr-0009#003",
+        "adr-0013#007",
+        "claude-md#003",
+        "readme#003",
+        "adr-0003#003",
+        "readme#005",
+        "adr-0007#005"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "bench-embed#003",
+          "rank": null
+        },
+        {
+          "eval_key": "claude-md#008",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0011#003",
+          "rank": 2
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0.3333333333333333
+        },
+        {
+          "k": 10,
+          "value": 0.3333333333333333
+        }
+      ],
+      "reciprocal_rank": 0.5,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 62.683563,
+          "without_embedding_ms": 2.422826
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 58.059522,
+          "without_embedding_ms": 2.252918
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 71.566526,
+          "without_embedding_ms": 2.10221
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 64.903679,
+          "without_embedding_ms": 2.230616
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 56.699652,
+          "without_embedding_ms": 2.241617
+        }
+      ]
+    },
+    {
+      "query_id": "q-003",
+      "text": "RECALL_STORE",
+      "tags": [
+        "exact-term"
+      ],
+      "relevant": [
+        "requirements#005",
+        "adr-0007#004",
+        "claude-md#009",
+        "claude-md#005"
+      ],
+      "ranked_keys": [
+        "claude-md#002",
+        "adr-0008#003",
+        "claude-md#003",
+        "requirements#001",
+        "readme#000",
+        "coding-rules#018",
+        "claude-md#024",
+        "adr-0013#011",
+        "adr-0007#003",
+        "adr-0002#002"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "requirements#005",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0007#004",
+          "rank": null
+        },
+        {
+          "eval_key": "claude-md#009",
+          "rank": null
+        },
+        {
+          "eval_key": "claude-md#005",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0
+        },
+        {
+          "k": 10,
+          "value": 0
+        }
+      ],
+      "reciprocal_rank": 0,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 61.358195,
+          "without_embedding_ms": 2.091209
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 51.451479,
+          "without_embedding_ms": 2.102009
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 48.249812,
+          "without_embedding_ms": 2.233816
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 57.171677,
+          "without_embedding_ms": 2.328421
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 47.865492,
+          "without_embedding_ms": 3.156765
+        }
+      ]
+    },
+    {
+      "query_id": "q-004",
+      "text": "modernc.org/sqlite",
+      "tags": [
+        "exact-term"
+      ],
+      "relevant": [
+        "claude-md#021",
+        "adr-0004#003",
+        "adr-0011#002",
+        "adr-0011#006"
+      ],
+      "ranked_keys": [
+        "claude-md#021",
+        "adr-0004#003",
+        "readme#015",
+        "adr-0011#006",
+        "claude-md#009",
+        "readme#000",
+        "adr-0004#004",
+        "readme#001",
+        "claude-md#013",
+        "adr-0011#002"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "claude-md#021",
+          "rank": 1
+        },
+        {
+          "eval_key": "adr-0004#003",
+          "rank": 2
+        },
+        {
+          "eval_key": "adr-0011#002",
+          "rank": 10
+        },
+        {
+          "eval_key": "adr-0011#006",
+          "rank": 4
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.25
+        },
+        {
+          "k": 5,
+          "value": 0.75
+        },
+        {
+          "k": 10,
+          "value": 1
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 54.432934,
+          "without_embedding_ms": 2.191314
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 67.160496,
+          "without_embedding_ms": 2.820947
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 67.299904,
+          "without_embedding_ms": 2.186314
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 61.022077,
+          "without_embedding_ms": 2.118511
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 59.758011,
+          "without_embedding_ms": 2.058007
+        }
+      ]
+    },
+    {
+      "query_id": "q-005",
+      "text": "CNF-001 は何を禁止する検査か",
+      "tags": [
+        "exact-term"
+      ],
+      "relevant": [
+        "claude-md#017",
+        "coding-rules#003",
+        "coding-rules#034",
+        "adr-0010#007"
+      ],
+      "ranked_keys": [
+        "coding-rules#034",
+        "claude-md#017",
+        "coding-rules#003",
+        "adr-0013#009",
+        "coding-rules#008",
+        "coding-rules#036",
+        "coding-rules#016",
+        "adr-0011#005",
+        "coding-rules#014",
+        "coding-rules#033"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "claude-md#017",
+          "rank": 2
+        },
+        {
+          "eval_key": "coding-rules#003",
+          "rank": 3
+        },
+        {
+          "eval_key": "coding-rules#034",
+          "rank": 1
+        },
+        {
+          "eval_key": "adr-0010#007",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.25
+        },
+        {
+          "k": 5,
+          "value": 0.75
+        },
+        {
+          "k": 10,
+          "value": 0.75
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 49.233663,
+          "without_embedding_ms": 2.471929
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 55.844607,
+          "without_embedding_ms": 2.345022
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 53.001559,
+          "without_embedding_ms": 2.10951
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 49.868097,
+          "without_embedding_ms": 2.227616
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 50.730041,
+          "without_embedding_ms": 2.196714
+        }
+      ]
+    },
+    {
+      "query_id": "q-006",
+      "text": "voyage-4-nano",
+      "tags": [
+        "exact-term"
+      ],
+      "relevant": [
+        "adr-0004#002",
+        "adr-0005#001"
+      ],
+      "ranked_keys": [
+        "adr-0004#002",
+        "adr-0005#001",
+        "adr-0005#003",
+        "requirements#019",
+        "adr-0008#004",
+        "adr-0008#003",
+        "adr-0005#000",
+        "coding-rules#016",
+        "readme#015",
+        "adr-0006#004"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "adr-0004#002",
+          "rank": 1
+        },
+        {
+          "eval_key": "adr-0005#001",
+          "rank": 2
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.5
+        },
+        {
+          "k": 5,
+          "value": 1
+        },
+        {
+          "k": 10,
+          "value": 1
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 64.646365,
+          "without_embedding_ms": 2.133512
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 58.446243,
+          "without_embedding_ms": 2.203214
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 47.354265,
+          "without_embedding_ms": 2.703941
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 47.765287,
+          "without_embedding_ms": 3.026958
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 47.231959,
+          "without_embedding_ms": 2.253917
+        }
+      ]
+    },
+    {
+      "query_id": "q-007",
+      "text": "PdoChunkSearchRepository.php",
+      "tags": [
+        "exact-term"
+      ],
+      "relevant": [
+        "claude-md#016",
+        "readme#004",
+        "readme#008",
+        "requirements#004",
+        "requirements#011",
+        "adr-0003#001",
+        "adr-0006#005"
+      ],
+      "ranked_keys": [
+        "readme#008",
+        "adr-0006#005",
+        "requirements#011",
+        "requirements#010",
+        "requirements#006",
+        "adr-0006#001",
+        "requirements#004",
+        "requirements#021",
+        "readme#004",
+        "requirements#005"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "claude-md#016",
+          "rank": null
+        },
+        {
+          "eval_key": "readme#004",
+          "rank": 9
+        },
+        {
+          "eval_key": "readme#008",
+          "rank": 1
+        },
+        {
+          "eval_key": "requirements#004",
+          "rank": 7
+        },
+        {
+          "eval_key": "requirements#011",
+          "rank": 3
+        },
+        {
+          "eval_key": "adr-0003#001",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0006#005",
+          "rank": 2
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.14285714285714285
+        },
+        {
+          "k": 5,
+          "value": 0.42857142857142855
+        },
+        {
+          "k": 10,
+          "value": 0.7142857142857143
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 49.9402,
+          "without_embedding_ms": 2.069108
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 57.639605,
+          "without_embedding_ms": 2.080008
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 52.270528,
+          "without_embedding_ms": 2.075008
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 50.789751,
+          "without_embedding_ms": 2.135711
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 56.372442,
+          "without_embedding_ms": 2.260918
+        }
+      ]
+    },
+    {
+      "query_id": "q-008",
+      "text": "ホスト側の DB ポートは 5433",
+      "tags": [
+        "exact-term"
+      ],
+      "relevant": [
+        "claude-md#013",
+        "readme#009",
+        "adr-0013#018"
+      ],
+      "ranked_keys": [
+        "adr-0013#018",
+        "claude-md#013",
+        "readme#011",
+        "readme#009",
+        "claude-md#003",
+        "adr-0004#003",
+        "adr-0007#004",
+        "adr-0011#007",
+        "adr-0011#004",
+        "adr-0012#001"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "claude-md#013",
+          "rank": 2
+        },
+        {
+          "eval_key": "readme#009",
+          "rank": 4
+        },
+        {
+          "eval_key": "adr-0013#018",
+          "rank": 1
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.3333333333333333
+        },
+        {
+          "k": 5,
+          "value": 1
+        },
+        {
+          "k": 10,
+          "value": 1
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 50.866255,
+          "without_embedding_ms": 2.565834
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 53.208178,
+          "without_embedding_ms": 2.11061
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 54.363538,
+          "without_embedding_ms": 2.269318
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 51.33468,
+          "without_embedding_ms": 2.583835
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 59.564209,
+          "without_embedding_ms": 2.201215
+        }
+      ]
+    },
+    {
+      "query_id": "q-009",
+      "text": "ベクトルの次元数は何次元か",
+      "tags": [
+        "numeric"
+      ],
+      "relevant": [
+        "requirements#018",
+        "requirements#019",
+        "adr-0008#004",
+        "adr-0008#008",
+        "readme#012",
+        "bench-embed#001",
+        "bench-embed#002"
+      ],
+      "ranked_keys": [
+        "adr-0004#001",
+        "claude-md#018",
+        "bench-embed#003",
+        "readme#012",
+        "bench-embed#002",
+        "claude-md#005",
+        "bench-embed#008",
+        "requirements#022",
+        "adr-0004#003",
+        "requirements#019"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "requirements#018",
+          "rank": null
+        },
+        {
+          "eval_key": "requirements#019",
+          "rank": 10
+        },
+        {
+          "eval_key": "adr-0008#004",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0008#008",
+          "rank": null
+        },
+        {
+          "eval_key": "readme#012",
+          "rank": 4
+        },
+        {
+          "eval_key": "bench-embed#001",
+          "rank": null
+        },
+        {
+          "eval_key": "bench-embed#002",
+          "rank": 5
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0.2857142857142857
+        },
+        {
+          "k": 10,
+          "value": 0.42857142857142855
+        }
+      ],
+      "reciprocal_rank": 0.25,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 57.824918,
+          "without_embedding_ms": 2.665439
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 61.345702,
+          "without_embedding_ms": 2.111311
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 47.877799,
+          "without_embedding_ms": 2.257718
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 51.224773,
+          "without_embedding_ms": 2.158913
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 55.213482,
+          "without_embedding_ms": 2.340522
+        }
+      ]
+    },
+    {
+      "query_id": "q-010",
+      "text": "文脈長は何トークンまで入るのか",
+      "tags": [
+        "numeric"
+      ],
+      "relevant": [
+        "readme#012",
+        "requirements#018",
+        "adr-0008#004",
+        "adr-0008#008",
+        "bench-embed#001",
+        "bench-embed#002"
+      ],
+      "ranked_keys": [
+        "adr-0008#004",
+        "adr-0004#001",
+        "readme#012",
+        "coding-rules#013",
+        "bench-embed#005",
+        "requirements#018",
+        "bench-embed#006",
+        "requirements#024",
+        "adr-0004#003",
+        "bench-embed#007"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "readme#012",
+          "rank": 3
+        },
+        {
+          "eval_key": "requirements#018",
+          "rank": 6
+        },
+        {
+          "eval_key": "adr-0008#004",
+          "rank": 1
+        },
+        {
+          "eval_key": "adr-0008#008",
+          "rank": null
+        },
+        {
+          "eval_key": "bench-embed#001",
+          "rank": null
+        },
+        {
+          "eval_key": "bench-embed#002",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.16666666666666666
+        },
+        {
+          "k": 5,
+          "value": 0.3333333333333333
+        },
+        {
+          "k": 10,
+          "value": 0.5
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 49.174066,
+          "without_embedding_ms": 2.530032
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 54.398239,
+          "without_embedding_ms": 2.340522
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 50.197821,
+          "without_embedding_ms": 2.256517
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 49.318174,
+          "without_embedding_ms": 2.176413
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 58.533956,
+          "without_embedding_ms": 2.453728
+        }
+      ]
+    },
+    {
+      "query_id": "q-011",
+      "text": "カバレッジの下限は何パーセントか",
+      "tags": [
+        "numeric"
+      ],
+      "relevant": [
+        "coding-rules#031"
+      ],
+      "ranked_keys": [
+        "coding-rules#031",
+        "coding-rules#013",
+        "claude-md#008",
+        "coding-rules#022",
+        "adr-0007#001",
+        "bench-embed#007",
+        "claude-md#023",
+        "adr-0009#001",
+        "coding-rules#011",
+        "adr-0013#019"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "coding-rules#031",
+          "rank": 1
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 1
+        },
+        {
+          "k": 5,
+          "value": 1
+        },
+        {
+          "k": 10,
+          "value": 1
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 69.513629,
+          "without_embedding_ms": 3.795798
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 64.280055,
+          "without_embedding_ms": 2.553933
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 62.123242,
+          "without_embedding_ms": 2.465029
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 57.220887,
+          "without_embedding_ms": 2.414326
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 50.672545,
+          "without_embedding_ms": 2.795146
+        }
+      ]
+    },
+    {
+      "query_id": "q-012",
+      "text": "バッチは何本くらいまとめて送ればいいか",
+      "tags": [
+        "numeric"
+      ],
+      "relevant": [
+        "bench-embed#005",
+        "bench-embed#004",
+        "claude-md#008",
+        "adr-0011#007"
+      ],
+      "ranked_keys": [
+        "bench-embed#005",
+        "bench-embed#015",
+        "claude-md#008",
+        "bench-embed#009",
+        "adr-0004#001",
+        "bench-embed#007",
+        "bench-embed#006",
+        "adr-0013#019",
+        "adr-0007#001",
+        "adr-0004#000"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "bench-embed#005",
+          "rank": 1
+        },
+        {
+          "eval_key": "bench-embed#004",
+          "rank": null
+        },
+        {
+          "eval_key": "claude-md#008",
+          "rank": 3
+        },
+        {
+          "eval_key": "adr-0011#007",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.25
+        },
+        {
+          "k": 5,
+          "value": 0.5
+        },
+        {
+          "k": 10,
+          "value": 0.5
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 52.026316,
+          "without_embedding_ms": 2.11841
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 58.150335,
+          "without_embedding_ms": 2.169314
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 54.753758,
+          "without_embedding_ms": 2.432327
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 55.640104,
+          "without_embedding_ms": 4.164317
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 49.866403,
+          "without_embedding_ms": 2.196714
+        }
+      ]
+    },
+    {
+      "query_id": "q-013",
+      "text": "関数の長さと複雑度の上限はいくつか",
+      "tags": [
+        "numeric"
+      ],
+      "relevant": [
+        "coding-rules#013"
+      ],
+      "ranked_keys": [
+        "coding-rules#013",
+        "adr-0010#001",
+        "adr-0013#019",
+        "adr-0004#001",
+        "bench-embed#002",
+        "adr-0010#010",
+        "bench-embed#004",
+        "adr-0009#003",
+        "adr-0010#004",
+        "bench-embed#011"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "coding-rules#013",
+          "rank": 1
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 1
+        },
+        {
+          "k": 5,
+          "value": 1
+        },
+        {
+          "k": 10,
+          "value": 1
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 58.955777,
+          "without_embedding_ms": 2.169213
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 50.815053,
+          "without_embedding_ms": 2.463328
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 50.436333,
+          "without_embedding_ms": 2.572134
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 55.961221,
+          "without_embedding_ms": 2.073308
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 50.220621,
+          "without_embedding_ms": 2.68524
+        }
+      ]
+    },
+    {
+      "query_id": "q-014",
+      "text": "検索の応答時間の目標は何ミリ秒か",
+      "tags": [
+        "numeric"
+      ],
+      "relevant": [
+        "requirements#023",
+        "bench-embed#007",
+        "adr-0004#003"
+      ],
+      "ranked_keys": [
+        "bench-embed#007",
+        "bench-embed#009",
+        "adr-0004#001",
+        "adr-0009#003",
+        "claude-md#005",
+        "adr-0009#001",
+        "requirements#023",
+        "requirements#024",
+        "claude-md#008",
+        "adr-0011#007"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "requirements#023",
+          "rank": 7
+        },
+        {
+          "eval_key": "bench-embed#007",
+          "rank": 1
+        },
+        {
+          "eval_key": "adr-0004#003",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.3333333333333333
+        },
+        {
+          "k": 5,
+          "value": 0.3333333333333333
+        },
+        {
+          "k": 10,
+          "value": 0.6666666666666666
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 61.584914,
+          "without_embedding_ms": 2.172214
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 56.031924,
+          "without_embedding_ms": 2.391224
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 59.718718,
+          "without_embedding_ms": 2.209615
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 51.410183,
+          "without_embedding_ms": 2.880151
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 49.687993,
+          "without_embedding_ms": 2.09181
+        }
+      ]
+    },
+    {
+      "query_id": "q-015",
+      "text": "pgvector は何件まで耐えられるのか",
+      "tags": [
+        "numeric"
+      ],
+      "relevant": [
+        "adr-0007#001",
+        "requirements#023"
+      ],
+      "ranked_keys": [
+        "adr-0007#001",
+        "adr-0007#005",
+        "bench-embed#008",
+        "bench-embed#003",
+        "adr-0007#003",
+        "adr-0011#007",
+        "bench-embed#000",
+        "adr-0004#000",
+        "claude-md#022",
+        "adr-0007#007"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "adr-0007#001",
+          "rank": 1
+        },
+        {
+          "eval_key": "requirements#023",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.5
+        },
+        {
+          "k": 5,
+          "value": 0.5
+        },
+        {
+          "k": 10,
+          "value": 0.5
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 61.092189,
+          "without_embedding_ms": 2.246517
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 61.016085,
+          "without_embedding_ms": 2.399225
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 50.015611,
+          "without_embedding_ms": 2.266218
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 49.542286,
+          "without_embedding_ms": 2.122811
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 50.467034,
+          "without_embedding_ms": 2.165213
+        }
+      ]
+    },
+    {
+      "query_id": "q-016",
+      "text": "10万件の取り込みには何分かかるのか",
+      "tags": [
+        "numeric"
+      ],
+      "relevant": [
+        "bench-embed#005",
+        "bench-embed#009",
+        "requirements#024",
+        "adr-0011#007"
+      ],
+      "ranked_keys": [
+        "bench-embed#009",
+        "bench-embed#005",
+        "bench-embed#007",
+        "adr-0011#007",
+        "bench-embed#006",
+        "requirements#024",
+        "adr-0004#001",
+        "bench-embed#004",
+        "adr-0007#001",
+        "adr-0004#000"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "bench-embed#005",
+          "rank": 2
+        },
+        {
+          "eval_key": "bench-embed#009",
+          "rank": 1
+        },
+        {
+          "eval_key": "requirements#024",
+          "rank": 6
+        },
+        {
+          "eval_key": "adr-0011#007",
+          "rank": 4
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.25
+        },
+        {
+          "k": 5,
+          "value": 0.75
+        },
+        {
+          "k": 10,
+          "value": 1
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 54.137525,
+          "without_embedding_ms": 2.232517
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 58.865272,
+          "without_embedding_ms": 2.122211
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 57.642209,
+          "without_embedding_ms": 2.355323
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 54.521446,
+          "without_embedding_ms": 2.351423
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 50.727848,
+          "without_embedding_ms": 2.49383
+        }
+      ]
+    },
+    {
+      "query_id": "q-017",
+      "text": "最初から HNSW 索引を作ってはいけないのはなぜか",
+      "tags": [
+        "negation"
+      ],
+      "relevant": [
+        "claude-md#022",
+        "adr-0007#003",
+        "bench-data#004",
+        "readme#005",
+        "requirements#014"
+      ],
+      "ranked_keys": [
+        "claude-md#022",
+        "bench-data#004",
+        "adr-0009#001",
+        "adr-0007#003",
+        "bench-embed#008",
+        "bench-embed#011",
+        "adr-0007#007",
+        "claude-md#013",
+        "requirements#002",
+        "adr-0013#018"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "claude-md#022",
+          "rank": 1
+        },
+        {
+          "eval_key": "adr-0007#003",
+          "rank": 4
+        },
+        {
+          "eval_key": "bench-data#004",
+          "rank": 2
+        },
+        {
+          "eval_key": "readme#005",
+          "rank": null
+        },
+        {
+          "eval_key": "requirements#014",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.2
+        },
+        {
+          "k": 5,
+          "value": 0.6
+        },
+        {
+          "k": 10,
+          "value": 0.6
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 68.305565,
+          "without_embedding_ms": 2.540733
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 58.571457,
+          "without_embedding_ms": 2.253118
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 62.225848,
+          "without_embedding_ms": 2.342522
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 56.126429,
+          "without_embedding_ms": 1.985304
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 48.410727,
+          "without_embedding_ms": 2.209215
+        }
+      ]
+    },
+    {
+      "query_id": "q-018",
+      "text": "検索の評価に LLM を使わないのはなぜか",
+      "tags": [
+        "negation"
+      ],
+      "relevant": [
+        "claude-md#024",
+        "adr-0009#005",
+        "adr-0013#011",
+        "requirements#026",
+        "readme#013"
+      ],
+      "ranked_keys": [
+        "adr-0009#005",
+        "claude-md#024",
+        "adr-0013#011",
+        "adr-0013#009",
+        "readme#004",
+        "claude-md#026",
+        "adr-0009#001",
+        "adr-0013#022",
+        "readme#002",
+        "requirements#026"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "claude-md#024",
+          "rank": 2
+        },
+        {
+          "eval_key": "adr-0009#005",
+          "rank": 1
+        },
+        {
+          "eval_key": "adr-0013#011",
+          "rank": 3
+        },
+        {
+          "eval_key": "requirements#026",
+          "rank": 10
+        },
+        {
+          "eval_key": "readme#013",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.2
+        },
+        {
+          "k": 5,
+          "value": 0.6
+        },
+        {
+          "k": 10,
+          "value": 0.8
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 54.619851,
+          "without_embedding_ms": 2.087309
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 62.121643,
+          "without_embedding_ms": 2.261518
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 55.228283,
+          "without_embedding_ms": 2.537832
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 49.22877,
+          "without_embedding_ms": 2.245517
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 56.779064,
+          "without_embedding_ms": 2.004704
+        }
+      ]
+    },
+    {
+      "query_id": "q-019",
+      "text": "org_id に既定値を置いてはいけない理由",
+      "tags": [
+        "negation"
+      ],
+      "relevant": [
+        "claude-md#016",
+        "adr-0003#001",
+        "adr-0003#002",
+        "adr-0003#003",
+        "requirements#023",
+        "readme#005"
+      ],
+      "ranked_keys": [
+        "claude-md#017",
+        "claude-md#016",
+        "coding-rules#003",
+        "adr-0003#002",
+        "coding-rules#005",
+        "coding-rules#007",
+        "coding-rules#009",
+        "readme#005",
+        "coding-rules#016",
+        "coding-rules#026"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "claude-md#016",
+          "rank": 2
+        },
+        {
+          "eval_key": "adr-0003#001",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0003#002",
+          "rank": 4
+        },
+        {
+          "eval_key": "adr-0003#003",
+          "rank": null
+        },
+        {
+          "eval_key": "requirements#023",
+          "rank": null
+        },
+        {
+          "eval_key": "readme#005",
+          "rank": 8
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0.3333333333333333
+        },
+        {
+          "k": 10,
+          "value": 0.5
+        }
+      ],
+      "reciprocal_rank": 0.5,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 56.404344,
+          "without_embedding_ms": 2.159913
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 51.564491,
+          "without_embedding_ms": 4.152817
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 56.963174,
+          "without_embedding_ms": 2.87855
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 65.016594,
+          "without_embedding_ms": 2.370123
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 69.459326,
+          "without_embedding_ms": 3.318473
+        }
+      ]
+    },
+    {
+      "query_id": "q-020",
+      "text": "cgo を持ち込まない理由は何か",
+      "tags": [
+        "negation"
+      ],
+      "relevant": [
+        "claude-md#021",
+        "coding-rules#022",
+        "adr-0011#002",
+        "adr-0004#001",
+        "requirements#023",
+        "adr-0007#004"
+      ],
+      "ranked_keys": [
+        "adr-0011#002",
+        "coding-rules#011",
+        "claude-md#021",
+        "adr-0011#005",
+        "coding-rules#022",
+        "claude-md#017",
+        "coding-rules#008",
+        "coding-rules#016",
+        "coding-rules#003",
+        "claude-md#016"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "claude-md#021",
+          "rank": 3
+        },
+        {
+          "eval_key": "coding-rules#022",
+          "rank": 5
+        },
+        {
+          "eval_key": "adr-0011#002",
+          "rank": 1
+        },
+        {
+          "eval_key": "adr-0004#001",
+          "rank": null
+        },
+        {
+          "eval_key": "requirements#023",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0007#004",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.16666666666666666
+        },
+        {
+          "k": 5,
+          "value": 0.5
+        },
+        {
+          "k": 10,
+          "value": 0.5
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 87.778681,
+          "without_embedding_ms": 2.349223
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 66.161454,
+          "without_embedding_ms": 2.597235
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 56.32654,
+          "without_embedding_ms": 2.926053
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 68.167158,
+          "without_embedding_ms": 3.304673
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 60.192542,
+          "without_embedding_ms": 2.344022
+        }
+      ]
+    },
+    {
+      "query_id": "q-021",
+      "text": "make eval を make check に含めないのはなぜか",
+      "tags": [
+        "negation"
+      ],
+      "relevant": [
+        "claude-md#011",
+        "adr-0013#009",
+        "adr-0013#010"
+      ],
+      "ranked_keys": [
+        "claude-md#011",
+        "adr-0013#009",
+        "adr-0013#010",
+        "adr-0013#020",
+        "claude-md#012",
+        "coding-rules#027",
+        "claude-md#010",
+        "adr-0013#017",
+        "claude-md#024",
+        "claude-md#006"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "claude-md#011",
+          "rank": 1
+        },
+        {
+          "eval_key": "adr-0013#009",
+          "rank": 2
+        },
+        {
+          "eval_key": "adr-0013#010",
+          "rank": 3
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.3333333333333333
+        },
+        {
+          "k": 5,
+          "value": 1
+        },
+        {
+          "k": 10,
+          "value": 1
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 71.818248,
+          "without_embedding_ms": 2.66924
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 57.152783,
+          "without_embedding_ms": 2.122711
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 47.50778,
+          "without_embedding_ms": 2.613336
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 48.313622,
+          "without_embedding_ms": 2.124311
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 47.190463,
+          "without_embedding_ms": 2.509431
+        }
+      ]
+    },
+    {
+      "query_id": "q-022",
+      "text": "pgvector-go を依存に入れなかったのはなぜか",
+      "tags": [
+        "negation"
+      ],
+      "relevant": [
+        "adr-0011#003",
+        "adr-0011#004",
+        "adr-0011#006",
+        "adr-0011#007"
+      ],
+      "ranked_keys": [
+        "adr-0011#004",
+        "adr-0011#009",
+        "adr-0011#007",
+        "adr-0007#001",
+        "adr-0011#001",
+        "adr-0011#005",
+        "coding-rules#023",
+        "adr-0011#006",
+        "claude-md#021",
+        "adr-0011#003"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "adr-0011#003",
+          "rank": 10
+        },
+        {
+          "eval_key": "adr-0011#004",
+          "rank": 1
+        },
+        {
+          "eval_key": "adr-0011#006",
+          "rank": 8
+        },
+        {
+          "eval_key": "adr-0011#007",
+          "rank": 3
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.25
+        },
+        {
+          "k": 5,
+          "value": 0.5
+        },
+        {
+          "k": 10,
+          "value": 1
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 48.816448,
+          "without_embedding_ms": 2.074109
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 63.61142,
+          "without_embedding_ms": 2.190214
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 60.648365,
+          "without_embedding_ms": 2.355823
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 51.365481,
+          "without_embedding_ms": 2.242117
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 49.088263,
+          "without_embedding_ms": 2.071108
+        }
+      ]
+    },
+    {
+      "query_id": "q-023",
+      "text": "2系統の p95 を引き算で求めてはいけない",
+      "tags": [
+        "negation"
+      ],
+      "relevant": [
+        "claude-md#026",
+        "adr-0013#008"
+      ],
+      "ranked_keys": [
+        "claude-md#026",
+        "adr-0013#008",
+        "bench-data#003",
+        "claude-md#022",
+        "bench-embed#007",
+        "adr-0009#007",
+        "coding-rules#026",
+        "adr-0006#003",
+        "adr-0003#003",
+        "adr-0013#006"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "claude-md#026",
+          "rank": 1
+        },
+        {
+          "eval_key": "adr-0013#008",
+          "rank": 2
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.5
+        },
+        {
+          "k": 5,
+          "value": 1
+        },
+        {
+          "k": 10,
+          "value": 1
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 55.396892,
+          "without_embedding_ms": 2.160712
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 55.897918,
+          "without_embedding_ms": 2.406726
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 53.139274,
+          "without_embedding_ms": 2.175513
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 52.520842,
+          "without_embedding_ms": 2.232216
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 47.358872,
+          "without_embedding_ms": 2.303721
+        }
+      ]
+    },
+    {
+      "query_id": "q-024",
+      "text": "Corpus が Recall を呼ぶのはどの経路か",
+      "tags": [
+        "particle"
+      ],
+      "relevant": [
+        "readme#008",
+        "requirements#006",
+        "requirements#008",
+        "requirements#010",
+        "requirements#011",
+        "adr-0001#003"
+      ],
+      "ranked_keys": [
+        "adr-0002#001",
+        "adr-0001#001",
+        "requirements#006",
+        "requirements#001",
+        "requirements#012",
+        "adr-0002#002",
+        "claude-md#002",
+        "readme#008",
+        "adr-0002#003",
+        "adr-0006#001"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "readme#008",
+          "rank": 8
+        },
+        {
+          "eval_key": "requirements#006",
+          "rank": 3
+        },
+        {
+          "eval_key": "requirements#008",
+          "rank": null
+        },
+        {
+          "eval_key": "requirements#010",
+          "rank": null
+        },
+        {
+          "eval_key": "requirements#011",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0001#003",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0.16666666666666666
+        },
+        {
+          "k": 10,
+          "value": 0.3333333333333333
+        }
+      ],
+      "reciprocal_rank": 0.3333333333333333,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 54.345537,
+          "without_embedding_ms": 2.260218
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 55.111376,
+          "without_embedding_ms": 3.593388
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 49.893504,
+          "without_embedding_ms": 2.943854
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 55.904018,
+          "without_embedding_ms": 2.218616
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 53.848611,
+          "without_embedding_ms": 2.429427
+        }
+      ]
+    },
+    {
+      "query_id": "q-025",
+      "text": "Recall が Corpus を呼ぶことはあるか",
+      "tags": [
+        "particle"
+      ],
+      "relevant": [
+        "readme#003",
+        "requirements#008",
+        "requirements#009",
+        "claude-md#003"
+      ],
+      "ranked_keys": [
+        "adr-0002#001",
+        "requirements#012",
+        "adr-0001#001",
+        "requirements#001",
+        "requirements#006",
+        "adr-0002#002",
+        "claude-md#002",
+        "readme#008",
+        "adr-0006#001",
+        "adr-0002#003"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "readme#003",
+          "rank": null
+        },
+        {
+          "eval_key": "requirements#008",
+          "rank": null
+        },
+        {
+          "eval_key": "requirements#009",
+          "rank": null
+        },
+        {
+          "eval_key": "claude-md#003",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0
+        },
+        {
+          "k": 10,
+          "value": 0
+        }
+      ],
+      "reciprocal_rank": 0,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 52.50114,
+          "without_embedding_ms": 2.408726
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 50.77155,
+          "without_embedding_ms": 2.583235
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 53.154275,
+          "without_embedding_ms": 2.530832
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 48.104511,
+          "without_embedding_ms": 2.181314
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 53.408587,
+          "without_embedding_ms": 2.263619
+        }
+      ]
+    },
+    {
+      "query_id": "q-026",
+      "text": "HNSW を入れると recall は上がるのか",
+      "tags": [
+        "particle"
+      ],
+      "relevant": [
+        "bench-embed#008",
+        "bench-embed#011",
+        "adr-0009#001"
+      ],
+      "ranked_keys": [
+        "bench-data#004",
+        "claude-md#022",
+        "bench-embed#011",
+        "bench-embed#008",
+        "adr-0007#003",
+        "adr-0013#018",
+        "adr-0013#011",
+        "claude-md#009",
+        "adr-0002#001",
+        "adr-0006#002"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "bench-embed#008",
+          "rank": 4
+        },
+        {
+          "eval_key": "bench-embed#011",
+          "rank": 3
+        },
+        {
+          "eval_key": "adr-0009#001",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0.6666666666666666
+        },
+        {
+          "k": 10,
+          "value": 0.6666666666666666
+        }
+      ],
+      "reciprocal_rank": 0.3333333333333333,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 49.99871,
+          "without_embedding_ms": 2.934253
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 53.553395,
+          "without_embedding_ms": 2.10551
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 58.691664,
+          "without_embedding_ms": 2.254517
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 49.040459,
+          "without_embedding_ms": 2.061308
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 51.907909,
+          "without_embedding_ms": 2.185114
+        }
+      ]
+    },
+    {
+      "query_id": "q-027",
+      "text": "Corpus 側の score を float に広げる作業はもう終わったのか",
+      "tags": [
+        "particle"
+      ],
+      "relevant": [
+        "claude-md#027",
+        "adr-0006#003",
+        "adr-0006#004",
+        "adr-0006#005",
+        "adr-0006#006",
+        "adr-0006#007"
+      ],
+      "ranked_keys": [
+        "claude-md#027",
+        "adr-0006#001",
+        "adr-0006#002",
+        "adr-0006#006",
+        "requirements#006",
+        "adr-0006#004",
+        "requirements#010",
+        "adr-0006#005",
+        "readme#007",
+        "adr-0001#002"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "claude-md#027",
+          "rank": 1
+        },
+        {
+          "eval_key": "adr-0006#003",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0006#004",
+          "rank": 6
+        },
+        {
+          "eval_key": "adr-0006#005",
+          "rank": 8
+        },
+        {
+          "eval_key": "adr-0006#006",
+          "rank": 4
+        },
+        {
+          "eval_key": "adr-0006#007",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.16666666666666666
+        },
+        {
+          "k": 5,
+          "value": 0.3333333333333333
+        },
+        {
+          "k": 10,
+          "value": 0.6666666666666666
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 53.287281,
+          "without_embedding_ms": 2.170414
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 53.305882,
+          "without_embedding_ms": 2.310821
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 49.763197,
+          "without_embedding_ms": 2.200915
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 51.982414,
+          "without_embedding_ms": 2.136111
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 47.654688,
+          "without_embedding_ms": 2.131411
+        }
+      ]
+    },
+    {
+      "query_id": "q-028",
+      "text": "score を float から int に丸めて返す案はなぜ却下されたのか",
+      "tags": [
+        "particle"
+      ],
+      "relevant": [
+        "adr-0006#001"
+      ],
+      "ranked_keys": [
+        "adr-0006#002",
+        "adr-0006#001",
+        "claude-md#027",
+        "adr-0011#007",
+        "coding-rules#019",
+        "adr-0007#001",
+        "claude-md#011",
+        "adr-0012#006",
+        "adr-0010#008",
+        "adr-0013#009"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "adr-0006#001",
+          "rank": 2
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 1
+        },
+        {
+          "k": 10,
+          "value": 1
+        }
+      ],
+      "reciprocal_rank": 0.5,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 57.65961,
+          "without_embedding_ms": 2.612536
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 66.157853,
+          "without_embedding_ms": 2.235716
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 55.73831,
+          "without_embedding_ms": 2.191514
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 52.224126,
+          "without_embedding_ms": 2.516531
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 52.949063,
+          "without_embedding_ms": 2.544033
+        }
+      ]
+    },
+    {
+      "query_id": "q-029",
+      "text": "本文の正はどちら側にあるのか",
+      "tags": [
+        "particle"
+      ],
+      "relevant": [
+        "adr-0002#001",
+        "adr-0002#002",
+        "adr-0002#003",
+        "requirements#012"
+      ],
+      "ranked_keys": [
+        "adr-0006#004",
+        "requirements#012",
+        "adr-0002#001",
+        "bench-embed#002",
+        "requirements#021",
+        "adr-0009#004",
+        "requirements#000",
+        "adr-0006#006",
+        "adr-0006#007",
+        "bench-embed#013"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "adr-0002#001",
+          "rank": 3
+        },
+        {
+          "eval_key": "adr-0002#002",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0002#003",
+          "rank": null
+        },
+        {
+          "eval_key": "requirements#012",
+          "rank": 2
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0.5
+        },
+        {
+          "k": 10,
+          "value": 0.5
+        }
+      ],
+      "reciprocal_rank": 0.5,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 63.791929,
+          "without_embedding_ms": 2.392325
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 60.998784,
+          "without_embedding_ms": 3.397578
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 69.252415,
+          "without_embedding_ms": 2.045306
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 62.334854,
+          "without_embedding_ms": 2.372724
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 63.201299,
+          "without_embedding_ms": 2.963955
+        }
+      ]
+    },
+    {
+      "query_id": "q-030",
+      "text": "再取り込み",
+      "tags": [
+        "compound"
+      ],
+      "relevant": [
+        "claude-md#025",
+        "adr-0013#003"
+      ],
+      "ranked_keys": [
+        "adr-0008#003",
+        "requirements#011",
+        "adr-0009#006",
+        "adr-0013#012",
+        "coding-rules#035",
+        "bench-embed#010",
+        "adr-0013#017",
+        "adr-0013#015",
+        "claude-md#007",
+        "adr-0005#003"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "claude-md#025",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0013#003",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0
+        },
+        {
+          "k": 10,
+          "value": 0
+        }
+      ],
+      "reciprocal_rank": 0,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 52.603845,
+          "without_embedding_ms": 2.711741
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 53.518294,
+          "without_embedding_ms": 2.394325
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 56.305139,
+          "without_embedding_ms": 2.045106
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 57.060579,
+          "without_embedding_ms": 2.644738
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 47.622586,
+          "without_embedding_ms": 2.773044
+        }
+      ]
+    },
+    {
+      "query_id": "q-031",
+      "text": "配線点",
+      "tags": [
+        "compound"
+      ],
+      "relevant": [
+        "coding-rules#009",
+        "coding-rules#018",
+        "coding-rules#021",
+        "coding-rules#024",
+        "adr-0012#003",
+        "adr-0012#007"
+      ],
+      "ranked_keys": [
+        "coding-rules#024",
+        "adr-0012#005",
+        "bench-embed#010",
+        "adr-0013#018",
+        "coding-rules#018",
+        "coding-rules#021",
+        "adr-0006#004",
+        "adr-0012#003",
+        "adr-0003#003",
+        "adr-0013#008"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "coding-rules#009",
+          "rank": null
+        },
+        {
+          "eval_key": "coding-rules#018",
+          "rank": 5
+        },
+        {
+          "eval_key": "coding-rules#021",
+          "rank": 6
+        },
+        {
+          "eval_key": "coding-rules#024",
+          "rank": 1
+        },
+        {
+          "eval_key": "adr-0012#003",
+          "rank": 8
+        },
+        {
+          "eval_key": "adr-0012#007",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.16666666666666666
+        },
+        {
+          "k": 5,
+          "value": 0.3333333333333333
+        },
+        {
+          "k": 10,
+          "value": 0.6666666666666666
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 51.7421,
+          "without_embedding_ms": 2.157412
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 49.598389,
+          "without_embedding_ms": 2.314421
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 48.503132,
+          "without_embedding_ms": 2.076408
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 54.477244,
+          "without_embedding_ms": 3.595887
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 48.380225,
+          "without_embedding_ms": 2.48823
+        }
+      ]
+    },
+    {
+      "query_id": "q-032",
+      "text": "コールドスタート",
+      "tags": [
+        "compound"
+      ],
+      "relevant": [
+        "bench-embed#004",
+        "adr-0013#008"
+      ],
+      "ranked_keys": [
+        "bench-embed#004",
+        "coding-rules#009",
+        "adr-0010#004",
+        "adr-0013#008",
+        "adr-0008#003",
+        "adr-0011#002",
+        "claude-md#000",
+        "coding-rules#018",
+        "claude-md#007",
+        "coding-rules#034"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "bench-embed#004",
+          "rank": 1
+        },
+        {
+          "eval_key": "adr-0013#008",
+          "rank": 4
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.5
+        },
+        {
+          "k": 5,
+          "value": 1
+        },
+        {
+          "k": 10,
+          "value": 1
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 49.532686,
+          "without_embedding_ms": 2.69374
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 61.478109,
+          "without_embedding_ms": 2.401425
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 51.967813,
+          "without_embedding_ms": 2.514131
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 47.641487,
+          "without_embedding_ms": 2.130611
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 46.335218,
+          "without_embedding_ms": 2.192515
+        }
+      ]
+    },
+    {
+      "query_id": "q-033",
+      "text": "型の壁",
+      "tags": [
+        "compound"
+      ],
+      "relevant": [
+        "adr-0006#001",
+        "claude-md#027"
+      ],
+      "ranked_keys": [
+        "adr-0006#001",
+        "claude-md#027",
+        "coding-rules#003",
+        "adr-0006#006",
+        "coding-rules#008",
+        "coding-rules#004",
+        "coding-rules#014",
+        "coding-rules#027",
+        "coding-rules#028",
+        "coding-rules#007"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "adr-0006#001",
+          "rank": 1
+        },
+        {
+          "eval_key": "claude-md#027",
+          "rank": 2
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.5
+        },
+        {
+          "k": 5,
+          "value": 1
+        },
+        {
+          "k": 10,
+          "value": 1
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 47.718591,
+          "without_embedding_ms": 2.205015
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 50.614342,
+          "without_embedding_ms": 2.67954
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 51.184972,
+          "without_embedding_ms": 2.368023
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 64.498267,
+          "without_embedding_ms": 2.368324
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 56.196433,
+          "without_embedding_ms": 2.227916
+        }
+      ]
+    },
+    {
+      "query_id": "q-034",
+      "text": "分割器のパラメータを変えるとどうなるか",
+      "tags": [
+        "compound"
+      ],
+      "relevant": [
+        "adr-0013#005",
+        "claude-md#025"
+      ],
+      "ranked_keys": [
+        "adr-0013#005",
+        "adr-0008#007",
+        "adr-0010#007",
+        "coding-rules#029",
+        "claude-md#018",
+        "requirements#015",
+        "adr-0005#004",
+        "coding-rules#021",
+        "adr-0006#003",
+        "bench-embed#015"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "adr-0013#005",
+          "rank": 1
+        },
+        {
+          "eval_key": "claude-md#025",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.5
+        },
+        {
+          "k": 5,
+          "value": 0.5
+        },
+        {
+          "k": 10,
+          "value": 0.5
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 59.935528,
+          "without_embedding_ms": 2.055707
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 50.088815,
+          "without_embedding_ms": 2.396225
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 58.203538,
+          "without_embedding_ms": 2.150812
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 60.52516,
+          "without_embedding_ms": 2.238616
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 54.092623,
+          "without_embedding_ms": 2.151012
+        }
+      ]
+    },
+    {
+      "query_id": "q-035",
+      "text": "封印インタフェース",
+      "tags": [
+        "compound"
+      ],
+      "relevant": [
+        "coding-rules#004",
+        "adr-0010#002"
+      ],
+      "ranked_keys": [
+        "adr-0008#008",
+        "adr-0005#002",
+        "coding-rules#004",
+        "coding-rules#021",
+        "readme#001",
+        "adr-0005#003",
+        "claude-md#019",
+        "requirements#020",
+        "adr-0010#002",
+        "coding-rules#020"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "coding-rules#004",
+          "rank": 3
+        },
+        {
+          "eval_key": "adr-0010#002",
+          "rank": 9
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0.5
+        },
+        {
+          "k": 10,
+          "value": 1
+        }
+      ],
+      "reciprocal_rank": 0.3333333333333333,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 51.376275,
+          "without_embedding_ms": 2.922833
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 58.401452,
+          "without_embedding_ms": 2.127897
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 63.683492,
+          "without_embedding_ms": 2.480412
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 61.851709,
+          "without_embedding_ms": 2.396309
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 56.661172,
+          "without_embedding_ms": 2.309705
+        }
+      ]
+    },
+    {
+      "query_id": "q-036",
+      "text": "L2 正規化",
+      "tags": [
+        "compound"
+      ],
+      "relevant": [
+        "bench-embed#003",
+        "requirements#020",
+        "adr-0004#002",
+        "adr-0004#004",
+        "claude-md#008",
+        "bench-embed#013"
+      ],
+      "ranked_keys": [
+        "bench-embed#003",
+        "adr-0004#002",
+        "adr-0010#001",
+        "adr-0002#000",
+        "adr-0005#000",
+        "claude-md#008",
+        "adr-0012#000",
+        "coding-rules#000",
+        "bench-embed#013",
+        "adr-0011#000"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "bench-embed#003",
+          "rank": 1
+        },
+        {
+          "eval_key": "requirements#020",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0004#002",
+          "rank": 2
+        },
+        {
+          "eval_key": "adr-0004#004",
+          "rank": null
+        },
+        {
+          "eval_key": "claude-md#008",
+          "rank": 6
+        },
+        {
+          "eval_key": "bench-embed#013",
+          "rank": 9
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.16666666666666666
+        },
+        {
+          "k": 5,
+          "value": 0.3333333333333333
+        },
+        {
+          "k": 10,
+          "value": 0.6666666666666666
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 50.795806,
+          "without_embedding_ms": 3.004236
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 57.100392,
+          "without_embedding_ms": 2.370308
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 59.773914,
+          "without_embedding_ms": 2.41131
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 62.000415,
+          "without_embedding_ms": 2.441611
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 51.163423,
+          "without_embedding_ms": 2.374408
+        }
+      ]
+    },
+    {
+      "query_id": "q-037",
+      "text": "状態を持たない推論サーバーとは何か",
+      "tags": [
+        "orthography"
+      ],
+      "relevant": [
+        "readme#003",
+        "requirements#008",
+        "requirements#009",
+        "claude-md#003"
+      ],
+      "ranked_keys": [
+        "requirements#009",
+        "readme#003",
+        "requirements#023",
+        "claude-md#003",
+        "requirements#001",
+        "claude-md#016",
+        "requirements#027",
+        "readme#002",
+        "adr-0004#003",
+        "requirements#007"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "readme#003",
+          "rank": 2
+        },
+        {
+          "eval_key": "requirements#008",
+          "rank": null
+        },
+        {
+          "eval_key": "requirements#009",
+          "rank": 1
+        },
+        {
+          "eval_key": "claude-md#003",
+          "rank": 4
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.25
+        },
+        {
+          "k": 5,
+          "value": 0.75
+        },
+        {
+          "k": 10,
+          "value": 0.75
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 55.403616,
+          "without_embedding_ms": 3.201945
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 56.094647,
+          "without_embedding_ms": 2.258302
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 64.381324,
+          "without_embedding_ms": 2.407609
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 62.865155,
+          "without_embedding_ms": 3.146242
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 65.63778,
+          "without_embedding_ms": 2.150698
+        }
+      ]
+    },
+    {
+      "query_id": "q-038",
+      "text": "クオリティゲートには何が含まれるのか",
+      "tags": [
+        "orthography"
+      ],
+      "relevant": [
+        "readme#009",
+        "readme#010",
+        "claude-md#015"
+      ],
+      "ranked_keys": [
+        "coding-rules#029",
+        "adr-0013#009",
+        "coding-rules#027",
+        "adr-0010#007",
+        "coding-rules#030",
+        "adr-0010#009",
+        "coding-rules#025",
+        "coding-rules#032",
+        "adr-0012#007",
+        "claude-md#010"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "readme#009",
+          "rank": null
+        },
+        {
+          "eval_key": "readme#010",
+          "rank": null
+        },
+        {
+          "eval_key": "claude-md#015",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0
+        },
+        {
+          "k": 10,
+          "value": 0
+        }
+      ],
+      "reciprocal_rank": 0,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 54.19006,
+          "without_embedding_ms": 2.292005
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 51.026817,
+          "without_embedding_ms": 2.617518
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 52.027862,
+          "without_embedding_ms": 2.106096
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 64.773741,
+          "without_embedding_ms": 2.666221
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 58.911275,
+          "without_embedding_ms": 2.335106
+        }
+      ]
+    },
+    {
+      "query_id": "q-039",
+      "text": "ハイブリット検索は何と何を合成するのか",
+      "tags": [
+        "orthography"
+      ],
+      "relevant": [
+        "claude-md#002",
+        "claude-md#008",
+        "readme#001",
+        "requirements#001",
+        "requirements#005",
+        "requirements#008"
+      ],
+      "ranked_keys": [
+        "adr-0009#001",
+        "claude-md#008",
+        "adr-0013#002",
+        "bench-embed#008",
+        "bench-embed#015",
+        "adr-0007#002",
+        "requirements#005",
+        "readme#001",
+        "adr-0006#003",
+        "readme#004"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "claude-md#002",
+          "rank": null
+        },
+        {
+          "eval_key": "claude-md#008",
+          "rank": 2
+        },
+        {
+          "eval_key": "readme#001",
+          "rank": 8
+        },
+        {
+          "eval_key": "requirements#001",
+          "rank": null
+        },
+        {
+          "eval_key": "requirements#005",
+          "rank": 7
+        },
+        {
+          "eval_key": "requirements#008",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0.16666666666666666
+        },
+        {
+          "k": 10,
+          "value": 0.5
+        }
+      ],
+      "reciprocal_rank": 0.5,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 53.861946,
+          "without_embedding_ms": 2.976135
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 53.354323,
+          "without_embedding_ms": 2.925733
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 56.128048,
+          "without_embedding_ms": 2.42381
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 63.014262,
+          "without_embedding_ms": 2.282503
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 53.625735,
+          "without_embedding_ms": 2.099796
+        }
+      ]
+    },
+    {
+      "query_id": "q-040",
+      "text": "エンベディングのモデルは何を使っているのか",
+      "tags": [
+        "orthography"
+      ],
+      "relevant": [
+        "requirements#018",
+        "requirements#019",
+        "adr-0008#004",
+        "readme#012",
+        "bench-embed#001"
+      ],
+      "ranked_keys": [
+        "adr-0008#008",
+        "requirements#016",
+        "requirements#020",
+        "requirements#027",
+        "adr-0005#002",
+        "adr-0005#001",
+        "readme#012",
+        "bench-data#003",
+        "adr-0008#005",
+        "adr-0008#004"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "requirements#018",
+          "rank": null
+        },
+        {
+          "eval_key": "requirements#019",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0008#004",
+          "rank": 10
+        },
+        {
+          "eval_key": "readme#012",
+          "rank": 7
+        },
+        {
+          "eval_key": "bench-embed#001",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0
+        },
+        {
+          "k": 10,
+          "value": 0.4
+        }
+      ],
+      "reciprocal_rank": 0.14285714285714285,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 53.908848,
+          "without_embedding_ms": 3.401554
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 52.056964,
+          "without_embedding_ms": 2.461612
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 63.160768,
+          "without_embedding_ms": 2.620519
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 62.135821,
+          "without_embedding_ms": 2.270003
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 49.415643,
+          "without_embedding_ms": 1.97289
+        }
+      ]
+    },
+    {
+      "query_id": "q-041",
+      "text": "ベクターデータベースを使わないという判断",
+      "tags": [
+        "orthography"
+      ],
+      "relevant": [
+        "adr-0004#001",
+        "adr-0004#003",
+        "adr-0007#007",
+        "adr-0009#001",
+        "readme#006"
+      ],
+      "ranked_keys": [
+        "readme#006",
+        "adr-0007#008",
+        "adr-0007#007",
+        "adr-0007#001",
+        "adr-0004#003",
+        "adr-0011#004",
+        "claude-md#026",
+        "claude-md#022",
+        "adr-0009#005",
+        "requirements#003"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "adr-0004#001",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0004#003",
+          "rank": 5
+        },
+        {
+          "eval_key": "adr-0007#007",
+          "rank": 3
+        },
+        {
+          "eval_key": "adr-0009#001",
+          "rank": null
+        },
+        {
+          "eval_key": "readme#006",
+          "rank": 1
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.2
+        },
+        {
+          "k": 5,
+          "value": 0.6
+        },
+        {
+          "k": 10,
+          "value": 0.6
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 54.673283,
+          "without_embedding_ms": 2.2066
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 60.768259,
+          "without_embedding_ms": 2.600918
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 52.053964,
+          "without_embedding_ms": 2.266203
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 48.146886,
+          "without_embedding_ms": 2.214301
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 52.402079,
+          "without_embedding_ms": 2.306305
+        }
+      ]
+    },
+    {
+      "query_id": "q-042",
+      "text": "ポスグレのホスト側ポート番号",
+      "tags": [
+        "orthography"
+      ],
+      "relevant": [
+        "claude-md#013",
+        "readme#009",
+        "adr-0013#018"
+      ],
+      "ranked_keys": [
+        "claude-md#013",
+        "readme#009",
+        "adr-0013#018",
+        "adr-0011#003",
+        "readme#011",
+        "adr-0007#004",
+        "claude-md#021",
+        "adr-0011#006",
+        "adr-0008#001",
+        "coding-rules#018"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "claude-md#013",
+          "rank": 1
+        },
+        {
+          "eval_key": "readme#009",
+          "rank": 2
+        },
+        {
+          "eval_key": "adr-0013#018",
+          "rank": 3
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.3333333333333333
+        },
+        {
+          "k": 5,
+          "value": 1
+        },
+        {
+          "k": 10,
+          "value": 1
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 50.680902,
+          "without_embedding_ms": 2.581717
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 50.245481,
+          "without_embedding_ms": 2.118897
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 51.445636,
+          "without_embedding_ms": 2.574217
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 50.351385,
+          "without_embedding_ms": 2.233902
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 65.821089,
+          "without_embedding_ms": 2.919832
+        }
+      ]
+    },
+    {
+      "query_id": "q-043",
+      "text": "埋込みモデルを変えたら保存済みのベクトルはどうなるのか",
+      "tags": [
+        "orthography"
+      ],
+      "relevant": [
+        "claude-md#018",
+        "requirements#020",
+        "adr-0005#004",
+        "adr-0008#007",
+        "readme#012"
+      ],
+      "ranked_keys": [
+        "claude-md#018",
+        "adr-0008#007",
+        "readme#012",
+        "requirements#020",
+        "adr-0005#003",
+        "requirements#017",
+        "adr-0004#003",
+        "adr-0008#004",
+        "bench-embed#003",
+        "adr-0005#002"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "claude-md#018",
+          "rank": 1
+        },
+        {
+          "eval_key": "requirements#020",
+          "rank": 4
+        },
+        {
+          "eval_key": "adr-0005#004",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0008#007",
+          "rank": 2
+        },
+        {
+          "eval_key": "readme#012",
+          "rank": 3
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.2
+        },
+        {
+          "k": 5,
+          "value": 0.8
+        },
+        {
+          "k": 10,
+          "value": 0.8
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 52.42188,
+          "without_embedding_ms": 2.2014
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 63.074564,
+          "without_embedding_ms": 2.465512
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 48.067582,
+          "without_embedding_ms": 2.1857
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 49.640654,
+          "without_embedding_ms": 2.325105
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 62.607142,
+          "without_embedding_ms": 2.014992
+        }
+      ]
+    },
+    {
+      "query_id": "q-044",
+      "text": "別の会社の資料が検索結果に混ざる事故",
+      "tags": [
+        "synonym"
+      ],
+      "relevant": [
+        "adr-0003#001",
+        "adr-0003#003",
+        "claude-md#016",
+        "readme#005",
+        "requirements#005"
+      ],
+      "ranked_keys": [
+        "adr-0007#002",
+        "bench-embed#011",
+        "adr-0003#003",
+        "adr-0003#001",
+        "readme#004",
+        "requirements#004",
+        "adr-0006#004",
+        "bench-embed#008",
+        "bench-embed#015",
+        "adr-0007#005"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "adr-0003#001",
+          "rank": 4
+        },
+        {
+          "eval_key": "adr-0003#003",
+          "rank": 3
+        },
+        {
+          "eval_key": "claude-md#016",
+          "rank": null
+        },
+        {
+          "eval_key": "readme#005",
+          "rank": null
+        },
+        {
+          "eval_key": "requirements#005",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0.4
+        },
+        {
+          "k": 10,
+          "value": 0.4
+        }
+      ],
+      "reciprocal_rank": 0.3333333333333333,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 47.452655,
+          "without_embedding_ms": 2.329906
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 49.646954,
+          "without_embedding_ms": 2.134297
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 65.328266,
+          "without_embedding_ms": 2.648621
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 55.602124,
+          "without_embedding_ms": 2.295005
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 47.613262,
+          "without_embedding_ms": 2.677921
+        }
+      ]
+    },
+    {
+      "query_id": "q-045",
+      "text": "ランニングコストはいくらか",
+      "tags": [
+        "synonym"
+      ],
+      "relevant": [
+        "claude-md#002",
+        "claude-md#028",
+        "readme#013",
+        "requirements#023",
+        "requirements#025",
+        "adr-0008#006"
+      ],
+      "ranked_keys": [
+        "bench-embed#007",
+        "readme#013",
+        "requirements#023",
+        "requirements#026",
+        "requirements#025",
+        "adr-0008#006",
+        "bench-embed#006",
+        "bench-embed#001",
+        "adr-0004#004",
+        "bench-embed#004"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "claude-md#002",
+          "rank": null
+        },
+        {
+          "eval_key": "claude-md#028",
+          "rank": null
+        },
+        {
+          "eval_key": "readme#013",
+          "rank": 2
+        },
+        {
+          "eval_key": "requirements#023",
+          "rank": 3
+        },
+        {
+          "eval_key": "requirements#025",
+          "rank": 5
+        },
+        {
+          "eval_key": "adr-0008#006",
+          "rank": 6
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0.5
+        },
+        {
+          "k": 10,
+          "value": 0.6666666666666666
+        }
+      ],
+      "reciprocal_rank": 0.5,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 52.050264,
+          "without_embedding_ms": 2.255202
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 50.691402,
+          "without_embedding_ms": 2.101395
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 49.518748,
+          "without_embedding_ms": 2.327206
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 62.99806,
+          "without_embedding_ms": 2.473813
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 51.268528,
+          "without_embedding_ms": 2.513214
+        }
+      ]
+    },
+    {
+      "query_id": "q-046",
+      "text": "ネットにつながっていなくても使えるのか",
+      "tags": [
+        "synonym"
+      ],
+      "relevant": [
+        "requirements#001",
+        "requirements#008",
+        "requirements#023",
+        "readme#002",
+        "readme#003",
+        "adr-0008#006"
+      ],
+      "ranked_keys": [
+        "readme#002",
+        "adr-0008#006",
+        "requirements#023",
+        "requirements#026",
+        "adr-0004#004",
+        "readme#001",
+        "adr-0008#002",
+        "adr-0007#008",
+        "requirements#025",
+        "coding-rules#020"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "requirements#001",
+          "rank": null
+        },
+        {
+          "eval_key": "requirements#008",
+          "rank": null
+        },
+        {
+          "eval_key": "requirements#023",
+          "rank": 3
+        },
+        {
+          "eval_key": "readme#002",
+          "rank": 1
+        },
+        {
+          "eval_key": "readme#003",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0008#006",
+          "rank": 2
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.16666666666666666
+        },
+        {
+          "k": 5,
+          "value": 0.5
+        },
+        {
+          "k": 10,
+          "value": 0.5
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 51.339731,
+          "without_embedding_ms": 2.240302
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 54.507775,
+          "without_embedding_ms": 2.698023
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 56.689474,
+          "without_embedding_ms": 2.571817
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 49.216535,
+          "without_embedding_ms": 2.573517
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 55.613025,
+          "without_embedding_ms": 2.070394
+        }
+      ]
+    },
+    {
+      "query_id": "q-047",
+      "text": "速さと当たり具合のトレードオフ",
+      "tags": [
+        "synonym"
+      ],
+      "relevant": [
+        "bench-embed#008",
+        "bench-embed#011",
+        "adr-0009#001",
+        "adr-0009#007"
+      ],
+      "ranked_keys": [
+        "bench-embed#009",
+        "bench-embed#004",
+        "bench-embed#006",
+        "adr-0011#007",
+        "adr-0004#000",
+        "coding-rules#031",
+        "bench-embed#005",
+        "coding-rules#032",
+        "adr-0009#003",
+        "coding-rules#013"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "bench-embed#008",
+          "rank": null
+        },
+        {
+          "eval_key": "bench-embed#011",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0009#001",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0009#007",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0
+        },
+        {
+          "k": 10,
+          "value": 0
+        }
+      ],
+      "reciprocal_rank": 0,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 51.448336,
+          "without_embedding_ms": 2.1986
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 48.114485,
+          "without_embedding_ms": 2.364007
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 64.335622,
+          "without_embedding_ms": 2.192099
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 60.34134,
+          "without_embedding_ms": 2.103196
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 47.112539,
+          "without_embedding_ms": 2.678522
+        }
+      ]
+    },
+    {
+      "query_id": "q-048",
+      "text": "0.7 という数字に裏付けはあるのか",
+      "tags": [
+        "synonym"
+      ],
+      "relevant": [
+        "claude-md#023",
+        "requirements#015",
+        "requirements#024",
+        "adr-0009#001",
+        "adr-0009#007",
+        "adr-0013#002",
+        "bench-data#003"
+      ],
+      "ranked_keys": [
+        "adr-0009#007",
+        "claude-md#023",
+        "adr-0013#002",
+        "bench-embed#002",
+        "coding-rules#031",
+        "adr-0004#000",
+        "bench-embed#009",
+        "coding-rules#000",
+        "claude-md#022",
+        "adr-0006#006"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "claude-md#023",
+          "rank": 2
+        },
+        {
+          "eval_key": "requirements#015",
+          "rank": null
+        },
+        {
+          "eval_key": "requirements#024",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0009#001",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0009#007",
+          "rank": 1
+        },
+        {
+          "eval_key": "adr-0013#002",
+          "rank": 3
+        },
+        {
+          "eval_key": "bench-data#003",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.14285714285714285
+        },
+        {
+          "k": 5,
+          "value": 0.42857142857142855
+        },
+        {
+          "k": 10,
+          "value": 0.42857142857142855
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 48.269992,
+          "without_embedding_ms": 2.238401
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 54.61518,
+          "without_embedding_ms": 2.1868
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 49.822662,
+          "without_embedding_ms": 2.722524
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 58.542058,
+          "without_embedding_ms": 2.562216
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 59.381697,
+          "without_embedding_ms": 2.1983
+        }
+      ]
+    },
+    {
+      "query_id": "q-049",
+      "text": "本文を2箇所に持つと何が起きるのか",
+      "tags": [
+        "synonym"
+      ],
+      "relevant": [
+        "adr-0002#001",
+        "adr-0002#003",
+        "requirements#012"
+      ],
+      "ranked_keys": [
+        "adr-0002#001",
+        "adr-0002#003",
+        "requirements#012",
+        "adr-0002#002",
+        "adr-0013#005",
+        "adr-0006#001",
+        "adr-0006#003",
+        "adr-0010#009",
+        "bench-data#003",
+        "adr-0006#004"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "adr-0002#001",
+          "rank": 1
+        },
+        {
+          "eval_key": "adr-0002#003",
+          "rank": 2
+        },
+        {
+          "eval_key": "requirements#012",
+          "rank": 3
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.3333333333333333
+        },
+        {
+          "k": 5,
+          "value": 1
+        },
+        {
+          "k": 10,
+          "value": 1
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 58.963477,
+          "without_embedding_ms": 2.104396
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 63.836198,
+          "without_embedding_ms": 3.399755
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 58.180242,
+          "without_embedding_ms": 2.345706
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 47.483156,
+          "without_embedding_ms": 2.005791
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 52.891001,
+          "without_embedding_ms": 2.391309
+        }
+      ]
+    },
+    {
+      "query_id": "q-050",
+      "text": "同じ問い合わせを繰り返しても順位は変わらないのか",
+      "tags": [
+        "paraphrase"
+      ],
+      "relevant": [
+        "adr-0013#008",
+        "bench-embed#013"
+      ],
+      "ranked_keys": [
+        "bench-embed#011",
+        "bench-embed#015",
+        "adr-0009#006",
+        "adr-0002#002",
+        "adr-0013#017",
+        "adr-0006#001",
+        "requirements#012",
+        "requirements#004",
+        "adr-0007#002",
+        "adr-0002#001"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "adr-0013#008",
+          "rank": null
+        },
+        {
+          "eval_key": "bench-embed#013",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0
+        },
+        {
+          "k": 10,
+          "value": 0
+        }
+      ],
+      "reciprocal_rank": 0,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 51.585042,
+          "without_embedding_ms": 2.390509
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 52.120266,
+          "without_embedding_ms": 2.479012
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 54.238563,
+          "without_embedding_ms": 2.162798
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 50.057773,
+          "without_embedding_ms": 2.721124
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 59.411098,
+          "without_embedding_ms": 2.314405
+        }
+      ]
+    },
+    {
+      "query_id": "q-051",
+      "text": "新しく入った人が規約を読まなくても品質を保つには",
+      "tags": [
+        "paraphrase"
+      ],
+      "relevant": [
+        "adr-0010#005",
+        "adr-0010#008",
+        "adr-0010#009",
+        "coding-rules#001",
+        "claude-md#028",
+        "readme#005"
+      ],
+      "ranked_keys": [
+        "adr-0010#009",
+        "coding-rules#026",
+        "claude-md#028",
+        "adr-0012#007",
+        "coding-rules#037",
+        "adr-0005#004",
+        "claude-md#016",
+        "readme#002",
+        "coding-rules#001",
+        "requirements#007"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "adr-0010#005",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0010#008",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0010#009",
+          "rank": 1
+        },
+        {
+          "eval_key": "coding-rules#001",
+          "rank": 9
+        },
+        {
+          "eval_key": "claude-md#028",
+          "rank": 3
+        },
+        {
+          "eval_key": "readme#005",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.16666666666666666
+        },
+        {
+          "k": 5,
+          "value": 0.3333333333333333
+        },
+        {
+          "k": 10,
+          "value": 0.5
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 57.887328,
+          "without_embedding_ms": 2.518915
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 68.535212,
+          "without_embedding_ms": 2.322005
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 54.696784,
+          "without_embedding_ms": 2.64252
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 50.835508,
+          "without_embedding_ms": 2.560217
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 50.044872,
+          "without_embedding_ms": 2.879431
+        }
+      ]
+    },
+    {
+      "query_id": "q-052",
+      "text": "良い数字が出たときに疑うべきこと",
+      "tags": [
+        "paraphrase"
+      ],
+      "relevant": [
+        "adr-0010#011",
+        "adr-0009#007",
+        "bench-embed#008",
+        "bench-data#003",
+        "claude-md#006"
+      ],
+      "ranked_keys": [
+        "adr-0009#007",
+        "claude-md#023",
+        "adr-0013#019",
+        "claude-md#006",
+        "adr-0013#021",
+        "adr-0009#003",
+        "adr-0009#006",
+        "adr-0013#014",
+        "coding-rules#032",
+        "adr-0009#008"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "adr-0010#011",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0009#007",
+          "rank": 1
+        },
+        {
+          "eval_key": "bench-embed#008",
+          "rank": null
+        },
+        {
+          "eval_key": "bench-data#003",
+          "rank": null
+        },
+        {
+          "eval_key": "claude-md#006",
+          "rank": 4
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.2
+        },
+        {
+          "k": 5,
+          "value": 0.4
+        },
+        {
+          "k": 10,
+          "value": 0.4
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 60.146231,
+          "without_embedding_ms": 2.222801
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 57.839726,
+          "without_embedding_ms": 2.568417
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 49.398543,
+          "without_embedding_ms": 2.239302
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 58.80927,
+          "without_embedding_ms": 2.326906
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 53.215616,
+          "without_embedding_ms": 2.219701
+        }
+      ]
+    },
+    {
+      "query_id": "q-053",
+      "text": "後から他人が数字を確かめられるようにするには何を残すのか",
+      "tags": [
+        "paraphrase"
+      ],
+      "relevant": [
+        "adr-0013#001",
+        "adr-0013#013",
+        "adr-0013#014",
+        "bench-data#001",
+        "bench-data#002",
+        "bench-embed#014"
+      ],
+      "ranked_keys": [
+        "adr-0013#014",
+        "claude-md#009",
+        "adr-0009#006",
+        "adr-0013#021",
+        "claude-md#006",
+        "coding-rules#010",
+        "adr-0007#005",
+        "bench-data#001",
+        "adr-0013#012",
+        "claude-md#022"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "adr-0013#001",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0013#013",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0013#014",
+          "rank": 1
+        },
+        {
+          "eval_key": "bench-data#001",
+          "rank": 8
+        },
+        {
+          "eval_key": "bench-data#002",
+          "rank": null
+        },
+        {
+          "eval_key": "bench-embed#014",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.16666666666666666
+        },
+        {
+          "k": 5,
+          "value": 0.16666666666666666
+        },
+        {
+          "k": 10,
+          "value": 0.3333333333333333
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 52.967605,
+          "without_embedding_ms": 2.87933
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 58.203242,
+          "without_embedding_ms": 2.088895
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 61.6641,
+          "without_embedding_ms": 3.097041
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 67.132948,
+          "without_embedding_ms": 2.727324
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 61.22528,
+          "without_embedding_ms": 2.665621
+        }
+      ]
+    },
+    {
+      "query_id": "q-054",
+      "text": "一度付けた正解が入れ直したとき別の場所を指してしまうのを防ぐには",
+      "tags": [
+        "paraphrase"
+      ],
+      "relevant": [
+        "adr-0013#003",
+        "adr-0013#004",
+        "adr-0013#005",
+        "claude-md#025"
+      ],
+      "ranked_keys": [
+        "claude-md#025",
+        "adr-0009#006",
+        "adr-0013#003",
+        "adr-0012#003",
+        "adr-0008#003",
+        "adr-0008#007",
+        "adr-0013#017",
+        "adr-0013#019",
+        "claude-md#017",
+        "adr-0005#003"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "adr-0013#003",
+          "rank": 3
+        },
+        {
+          "eval_key": "adr-0013#004",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0013#005",
+          "rank": null
+        },
+        {
+          "eval_key": "claude-md#025",
+          "rank": 1
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.25
+        },
+        {
+          "k": 5,
+          "value": 0.5
+        },
+        {
+          "k": 10,
+          "value": 0.5
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 59.886019,
+          "without_embedding_ms": 2.42861
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 64.422626,
+          "without_embedding_ms": 2.548915
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 64.414724,
+          "without_embedding_ms": 3.779872
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 63.068164,
+          "without_embedding_ms": 2.144997
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 55.145904,
+          "without_embedding_ms": 2.354007
+        }
+      ]
+    },
+    {
+      "query_id": "q-055",
+      "text": "速いと言うために何が必要か",
+      "tags": [
+        "paraphrase"
+      ],
+      "relevant": [
+        "coding-rules#032",
+        "adr-0011#007",
+        "adr-0011#010"
+      ],
+      "ranked_keys": [
+        "coding-rules#032",
+        "bench-embed#005",
+        "readme#005",
+        "bench-embed#006",
+        "bench-embed#009",
+        "adr-0009#002",
+        "bench-embed#004",
+        "requirements#002",
+        "adr-0009#001",
+        "requirements#014"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "coding-rules#032",
+          "rank": 1
+        },
+        {
+          "eval_key": "adr-0011#007",
+          "rank": null
+        },
+        {
+          "eval_key": "adr-0011#010",
+          "rank": null
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0.3333333333333333
+        },
+        {
+          "k": 5,
+          "value": 0.3333333333333333
+        },
+        {
+          "k": 10,
+          "value": 0.3333333333333333
+        }
+      ],
+      "reciprocal_rank": 1,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 48.755413,
+          "without_embedding_ms": 3.150843
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 68.772722,
+          "without_embedding_ms": 3.363553
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 49.908366,
+          "without_embedding_ms": 2.111696
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 54.108257,
+          "without_embedding_ms": 3.064039
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 51.286628,
+          "without_embedding_ms": 4.593809
+        }
+      ]
+    },
+    {
+      "query_id": "q-056",
+      "text": "埋め込みサーバが停止したとき、保存済みのデータは使えるのか",
+      "tags": [
+        "paraphrase"
+      ],
+      "relevant": [
+        "adr-0008#006"
+      ],
+      "ranked_keys": [
+        "claude-md#018",
+        "adr-0004#003",
+        "readme#012",
+        "adr-0008#002",
+        "requirements#017",
+        "adr-0008#006",
+        "adr-0012#004",
+        "adr-0008#004",
+        "requirements#027",
+        "requirements#005"
+      ],
+      "relevant_ranks": [
+        {
+          "eval_key": "adr-0008#006",
+          "rank": 6
+        }
+      ],
+      "recall": [
+        {
+          "k": 1,
+          "value": 0
+        },
+        {
+          "k": 5,
+          "value": 0
+        },
+        {
+          "k": 10,
+          "value": 1
+        }
+      ],
+      "reciprocal_rank": 0.16666666666666666,
+      "latencies": [
+        {
+          "round": 1,
+          "with_embedding_ms": 54.302866,
+          "without_embedding_ms": 2.062394
+        },
+        {
+          "round": 2,
+          "with_embedding_ms": 56.642172,
+          "without_embedding_ms": 2.767925
+        },
+        {
+          "round": 3,
+          "with_embedding_ms": 47.287848,
+          "without_embedding_ms": 2.640119
+        },
+        {
+          "round": 4,
+          "with_embedding_ms": 49.413443,
+          "without_embedding_ms": 1.97449
+        },
+        {
+          "round": 5,
+          "with_embedding_ms": 48.178788,
+          "without_embedding_ms": 2.181399
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "query_count": 56,
+    "recall": [
+      {
+        "k": 1,
+        "value": 0.20301870748299317
+      },
+      {
+        "k": 5,
+        "value": 0.49481292517006786
+      },
+      {
+        "k": 10,
+        "value": 0.6054421768707484
+      }
+    ],
+    "mrr": 0.7302295918367346,
+    "latency": {
+      "with_embedding": {
+        "samples": 280,
+        "min_ms": 46.335218,
+        "p50_ms": 54.432934,
+        "p95_ms": 66.161454,
+        "max_ms": 87.778681
+      },
+      "without_embedding": {
+        "samples": 280,
+        "min_ms": 1.97289,
+        "p50_ms": 2.328421,
+        "p95_ms": 3.304673,
+        "max_ms": 4.593809
+      }
+    },
+    "tag_recall": [
+      {
+        "tag": "compound",
+        "query_count": 7,
+        "recall": [
+          {
+            "k": 1,
+            "value": 0.2619047619047619
+          },
+          {
+            "k": 5,
+            "value": 0.5238095238095238
+          },
+          {
+            "k": 10,
+            "value": 0.6904761904761905
+          }
+        ]
+      },
+      {
+        "tag": "exact-term",
+        "query_count": 8,
+        "recall": [
+          {
+            "k": 1,
+            "value": 0.1845238095238095
+          },
+          {
+            "k": 5,
+            "value": 0.5327380952380951
+          },
+          {
+            "k": 10,
+            "value": 0.5997023809523809
+          }
+        ]
+      },
+      {
+        "tag": "negation",
+        "query_count": 7,
+        "recall": [
+          {
+            "k": 1,
+            "value": 0.2357142857142857
+          },
+          {
+            "k": 5,
+            "value": 0.6476190476190476
+          },
+          {
+            "k": 10,
+            "value": 0.7714285714285715
+          }
+        ]
+      },
+      {
+        "tag": "numeric",
+        "query_count": 8,
+        "recall": [
+          {
+            "k": 1,
+            "value": 0.43750000000000006
+          },
+          {
+            "k": 5,
+            "value": 0.5877976190476191
+          },
+          {
+            "k": 10,
+            "value": 0.699404761904762
+          }
+        ]
+      },
+      {
+        "tag": "orthography",
+        "query_count": 7,
+        "recall": [
+          {
+            "k": 1,
+            "value": 0.14047619047619048
+          },
+          {
+            "k": 5,
+            "value": 0.4738095238095238
+          },
+          {
+            "k": 10,
+            "value": 0.5785714285714285
+          }
+        ]
+      },
+      {
+        "tag": "paraphrase",
+        "query_count": 7,
+        "recall": [
+          {
+            "k": 1,
+            "value": 0.15952380952380954
+          },
+          {
+            "k": 5,
+            "value": 0.2476190476190476
+          },
+          {
+            "k": 10,
+            "value": 0.43809523809523815
+          }
+        ]
+      },
+      {
+        "tag": "particle",
+        "query_count": 6,
+        "recall": [
+          {
+            "k": 1,
+            "value": 0.027777777777777776
+          },
+          {
+            "k": 5,
+            "value": 0.4444444444444444
+          },
+          {
+            "k": 10,
+            "value": 0.5277777777777778
+          }
+        ]
+      },
+      {
+        "tag": "synonym",
+        "query_count": 6,
+        "recall": [
+          {
+            "k": 1,
+            "value": 0.10714285714285714
+          },
+          {
+            "k": 5,
+            "value": 0.47142857142857136
+          },
+          {
+            "k": 10,
+            "value": 0.4992063492063492
+          }
+        ]
+      }
+    ]
+  }
+}
