@@ -170,6 +170,7 @@ WSL に直接入れるか、Postgres を apt で入れる。内訳は要件定�
 | [`docs/requirements.md`](docs/requirements.md) | 要件定義。スコープ・アーキテクチャ・非機能要件・費用・未決事項 |
 | [`docs/adr/`](docs/adr/) | 設計判断の記録。判断の正本はここ |
 | [`docs/openapi/openapi.yaml`](docs/openapi/openapi.yaml) | API 定義（OpenAPI 3.1） |
+| [`docs/benchmarks/`](docs/benchmarks/) | 実測値。索引や実装の判断は必ずここの数字を根拠にする |
 
 ## ライセンス
 
