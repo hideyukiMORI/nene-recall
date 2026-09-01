@@ -30,3 +30,9 @@ func ErrVectorDimensions() error { return errVectorDimensions }
 
 // ErrVectorNotNormalized は errVectorNotNormalized をテストへ公開する。
 func ErrVectorNotNormalized() error { return errVectorNotNormalized }
+
+// ErrEmbedderDimensions は errEmbedderDimensions をテストへ公開する。
+func ErrEmbedderDimensions() error { return errEmbedderDimensions }
+
+// ErrEmbedderID は errEmbedderID をテストへ公開する。
+func ErrEmbedderID() error { return errEmbedderID }
