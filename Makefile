@@ -5,6 +5,7 @@
 #    「ローカルでは通ったのに CI で落ちた」を構造的に起こさないため。
 GO ?= go
 BIN := bin/recall
+CTL_BIN := bin/recallctl
 EVAL_BIN := bin/eval
 COVER_OUT := coverage.out
 
@@ -50,8 +51,14 @@ check: fmt-check vet lint conformance test cover-check tidy-check build
 ## あって成果物ではない。意味を変えないこと。
 ## cmd/eval のコンパイル破壊なら check が既に検知する——go vet ./... と
 ## go test ./... がどちらも全パッケージを通るので、埋めるべき穴が無い。
+##
+## 🔴 recallctl は成果物なので、こちらは build の対象に入れる。CLI は個人利用の
+## 入口そのもので、配布して使うものである（docs/adr/0016-cli-is-an-http-client-with-org-default.md
+## の Consequences）。評価ランナーを外す方針と矛盾しない——線は「開発者の道具か
+## 利用者の道具か」で引いている。
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -o $(BIN) ./cmd/recall
+	CGO_ENABLED=0 $(GO) build -trimpath -o $(CTL_BIN) ./cmd/recallctl
 
 run:
 	$(GO) run ./cmd/recall

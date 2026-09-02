@@ -1,6 +1,9 @@
 # ビルド成果物
 /bin/
 /recall
+# 素の `go build ./...` はカレントに実行ファイルを落とす。cmd/recallctl の中で
+# 打つと cmd/recallctl/recallctl ができるので、パス先頭を固定しない。
+recallctl
 *.exe
 
 # ローカルの永続データ
