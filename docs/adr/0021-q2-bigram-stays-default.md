@@ -73,6 +73,7 @@ Postgres・rounds=5・同一セッション）。
 
 - CLAUDE.md・要件定義 §9 Q-2 を「決着（ADR 0021）」に。`.env.example` の `RECALL_TOKENIZER` に選び方を書く
 - 追従 1: 和集合分割器の予想登録 → 実装 → 実測（Decision 3）。既定変更はその結果を見て別 ADR
+  → 実測 [`2026-09-02-eval-union-tokenizer.md`](../benchmarks/2026-09-02-eval-union-tokenizer.md)
 - 追従 2: **系統2 p95 の 2 モード問題**を切り分ける（Postgres の実行計画・JIT・共有バッファ・WSL のスケジューリングが候補）。
   切り分けまでは、latency の比較は**同一セッション・同モード**で行い、別セッションの正本と直接並べない（比較文書がそう書いている）
 - ADR 0015 の `alpha=0.8` は両分割器のプラトーに残るので変更なし
