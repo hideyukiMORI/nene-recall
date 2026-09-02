@@ -28,7 +28,7 @@ make eval EVAL_LABEL=baseline GPU_NOTE="他アプリが 5.7GB 使用中"
 | --- | --- |
 | 環境 | git revision / 未コミット変更の有無・Go 版・`embedder_id`・**Ollama の版とモデル digest**・PostgreSQL と pgvector の版・**SQLite の版**・GPU 占有の自己申告 |
 | 入力の同一性 | 3ファイルの **sha256** と件数 |
-| 条件 | `alpha`・`limit`・`rounds`・ウォームアップ周回数・`k` 値・**パーセンタイルの定義**・**順位付けの条件**（`ranking`: **バックエンド**・**語彙採点関数**・融合方式・`ts_rank` の正規化フラグ・RRF の `k`） |
+| 条件 | `alpha`（10進・v4 から `float64`）・`limit`・`rounds`・ウォームアップ周回数・`k` 値・**パーセンタイルの定義**・**順位付けの条件**（`ranking`: **バックエンド**・**語彙採点関数**・融合方式、および postgres でのみ `ts_rank` の正規化フラグと RRF の `k`） |
 | per-query の生データ | 上位の並び（`eval_key` と**3つのスコア**）・正解ごとの順位（圏外は `null`）・ラウンドごとの latency 2系統 |
 | 集計値 | `recall@1/5/10`・`MRR`・p50/p95（2系統）・タグ別 `recall`・**micro 内訳**・**gold 長さ別の内訳**・**名指しの長文チャンクの追跡** |
 
@@ -42,6 +42,7 @@ make eval EVAL_LABEL=baseline GPU_NOTE="他アプリが 5.7GB 使用中"
 | `nene-recall/eval-report/v1` | 2026-09-01 | 初版 |
 | `nene-recall/eval-report/v2` | 2026-09-02 | 語彙検索の実装に合わせて拡張 |
 | `nene-recall/eval-report/v3` | 2026-09-02 | 比較用の SQLite ストアに合わせて拡張 |
+| `nene-recall/eval-report/v4` | 2026-09-02 | `conditions` をストア非依存で正確にした |
 
 v2 で変えたのは3点。
 
@@ -83,13 +84,38 @@ v3 で変えたのは2点。どちらも「**どのバックエンドで測っ�
 それぞれ測る。⚠️ `alpha` の最適値は正規化方式に条件付きなので、postgres で
 決めた値を SQLite にそのまま当てはめないこと。
 
-⚠️ v3 の `ts_rank_normalization` と `rrf_k` は **postgres でしか意味を持たない**。
-`store` が `sqlite` のレポートでは 0 になるが、それは「フラグ 0 で測った」では
-なく「その採点関数にそのつまみが無い」という意味である。
-
 ```bash
 make eval EVAL_LABEL=sqlite EVAL_STORE=sqlite  # 比較用の SQLite（Postgres は要らない）
 ```
+
+v4 で変えたのは3点。どれも**レポートを読み違える経路を塞ぐ**ためで、
+項目が増えたわけではない（2026-09-02 の比較計測で見つかった）。
+
+1. **`conditions.alpha` が `float64` になった。** v3 までは `float32` を経由して
+   いたので、`-alpha 0.6` が `"alpha": 0.6000000238418579` と刻まれ、機械で
+   突き合わせると `== 0.6` が偽になった。検索へ渡る値が `float32` であることは
+   変えていない（`index.Query.Alpha` の型は契約）。**記録するのは落とす前の10進**
+2. **`conditions.ranking` の `ts_rank_normalization` と `rrf_k` が、そのストアに
+   無ければ*キーごと出なくなった*。** `store: sqlite` のレポートには現れない。
+   🔴 postgres の `ts_rank_normalization` は **0 が正しい値**なので、消えるのは
+   sqlite のときだけである（「無い」と「0」を区別するためにポインタで持っている）
+3. **`conditions.alpha_note` がストアごとに変わった。** postgres は ADR 0015 の
+   条件付きの説明、sqlite は「ADR 0015 の対象外である」ことを述べる。
+   文言は配線点（`cmd/eval`）が `store` の値で選ぶ
+
+### v3 以前のレポートを読むときの注意
+
+**過去の JSON は当時の様式のまま残してある**（書き換えていない）。並べて読むときは
+次の3点を補って読むこと。
+
+| 項目 | v3 以前の読み方 |
+| --- | --- |
+| `conditions.alpha` | `float32` の丸めを帯びている。`0.6000000238418579` は **`0.6` の意味**であって、掃引の別の点ではない |
+| `conditions.ranking.ts_rank_normalization` / `rrf_k` | `store: sqlite` のレポートにも `0` / `60` で入っている。SQLite に `ts_rank` は無いので、これは「**フラグ 0 で測った**」ではなく「その採点関数にそのつまみが無い」の意味 |
+| `conditions.alpha_note` | `store` に関わらず **Postgres 由来の文言**が入っている。sqlite のレポートの「既定 0.8 は…プラトーの中心」は、**SQLite で測った話ではない**（SQLite のプラトーは 0.8〜0.9 で、`docs/benchmarks/2026-09-02-eval-store-comparison.md` が正本） |
+
+集計値（`recall` / `MRR` / `latency`）の定義は v3 と v4 で変わっていないので、
+そのまま比較できる。
 
 ## micro 内訳と gold の長さ別内訳（v2 から）
 

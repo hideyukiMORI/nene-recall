@@ -34,21 +34,6 @@ const DefaultRounds = 5
 // 1サンプル混ざるだけで p95 が壊れる。
 const WarmupRounds = 1
 
-// alphaNote は alpha の読み方をレポート自身に書き残す文言。
-//
-// 🔴 レポートは単体で読まれる。数字だけを載せると、読んだ人はそれが普遍的に
-// 調整済みの値だと受け取る。既定 0.8 は実測から選んだ値だが、それは測ったときの
-// 条件（評価セット・埋め込みモデル・分割器・語彙スコアの正規化方式）に紐づく値で
-// あって最適値ではない
-// (docs/adr/0015-fusion-is-weighted-sum-with-alpha-0.8.md の Decision 3)。
-//
-// ⚠️ 文言だけを ADR 0015 に合わせてある。フィールド名・型・JSON の形
-// (alpha_note) は変えていないので、過去のレポートとの比較は今までどおり効く。
-const alphaNote = "the default 0.8 was chosen on the 2026-09-02 eval set " +
-	"(bge-m3:1024, bigram, per-query lexical normalization); it is the centre of the " +
-	"0.7-0.9 plateau, not a universal optimum (ADR 0015). " +
-	"Re-measure if any of those conditions change."
-
 // GoldLengthThreshold は gold チャンクを長短に分ける文字数の閾値。
 //
 // 🔑 520 は評価セット自身が分割に使っている値である
@@ -117,8 +102,20 @@ type Dependencies struct {
 type Options struct {
 	// OrgID は投入・検索に使うテナント。org.ParseID / org.NewID を通した値を渡すこと。
 	OrgID org.ID
-	// Alpha は合成の重み。根拠はまだ無い（要件定義 Q-3）。
-	Alpha float32
+	// Alpha は合成の重み。
+	//
+	// 🔴 float64 で受ける。検索へ渡すときに float32 へ落とすが
+	// (index.Query.Alpha が float32 という契約)、レポートに刻むのは落とす前の
+	// 10進である。float32 を経由した値を記録すると 0.6 が
+	// 0.6000000238418579 になり、機械での突き合わせで一致しなくなる。
+	Alpha float64
+	// AlphaNote は alpha の読み方の但し書き。レポートにそのまま載る。
+	//
+	// 🔴 文言はこの層が持たない。alpha の最適値はストア（語彙スコアの正規化
+	// 方式）に条件付きで、定数をここに置くと具体ストアを知らないはずの層に
+	// Postgres の事情が漏れる (ARC-001)。空なら計測を止める——但し書きの
+	// 無い数字は「調整済みの値」として読まれる (CLAUDE.md 地雷7)。
+	AlphaNote string
 	// Limit は1クエリあたりの取得件数。DefaultLimit を参照。
 	Limit int
 	// Rounds は計測ラウンド数。DefaultRounds を参照。
@@ -229,6 +226,8 @@ func (o Options) validate() error {
 		return fmt.Errorf("%w: alpha must be within [0,1], got %v", ErrMeasure, o.Alpha)
 	case o.Ranking.Fusion == "":
 		return fmt.Errorf("%w: the ranking settings must record a fusion method", ErrMeasure)
+	case o.AlphaNote == "":
+		return fmt.Errorf("%w: the conditions must carry a note on how to read alpha", ErrMeasure)
 	}
 
 	return nil
@@ -239,7 +238,7 @@ func (o Options) conditions() Conditions {
 	return Conditions{
 		OrgID:        o.OrgID,
 		Alpha:        o.Alpha,
-		AlphaNote:    alphaNote,
+		AlphaNote:    o.AlphaNote,
 		Limit:        o.Limit,
 		Rounds:       o.Rounds,
 		WarmupRounds: WarmupRounds,
@@ -253,12 +252,16 @@ func (o Options) conditions() Conditions {
 }
 
 // indexQuery は評価クエリを検索要求にする。
+//
+// 🔴 ここが float64 の条件を float32 の契約へ落とす唯一の場所である
+// (index.Query.Alpha は float32)。落とした値をレポートへ戻さない——
+// 戻すと 0.6 が 0.6000000238418579 として記録される。
 func (p plan) indexQuery(q Query) index.Query {
 	return index.Query{
 		OrgID:       p.opts.OrgID,
 		Text:        q.Text,
 		Limit:       p.opts.Limit,
-		Alpha:       p.opts.Alpha,
+		Alpha:       float32(p.opts.Alpha),
 		DocumentIDs: nil,
 		SourceIDs:   nil,
 	}

@@ -2,6 +2,7 @@ package eval_test
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -160,6 +161,99 @@ func TestReportMarshalsToJSON(t *testing.T) {
 	}
 }
 
+// TestRankingSettingsOmitTheKnobsAStoreDoesNotHave は、ストアに存在しない
+// つまみが JSON から**キーごと**消え、実際に使っている 0 は残ることを見る。
+//
+// 🔴 これが様式 v4 の中心である。v3 までは sqlite のレポートにも
+// ts_rank_normalization: 0 が入っており、SQLite に ts_rank は無いのに
+// 「フラグ 0 で測った」と読めた。同時に postgres の 0 は消してはならない——
+// int の omitempty では両方消えるので、ポインタで区別している。
+func TestRankingSettingsOmitTheKnobsAStoreDoesNotHave(t *testing.T) {
+	cases := map[string]struct {
+		ranking eval.RankingSettings
+		want    []string
+		notWant []string
+	}{
+		"postgres は 0 のフラグを残す": {
+			ranking: testReportRanking(),
+			want: []string{
+				`"store": "postgres"`, `"lexical_scorer": "ts_rank"`,
+				`"ts_rank_normalization": 0`, `"rrf_k": 60`,
+			},
+			notWant: nil,
+		},
+		"sqlite は postgres 専用の項目を出さない": {
+			ranking: testSQLiteRanking(),
+			want: []string{
+				`"store": "sqlite"`, `"lexical_scorer": "fts5-bm25"`,
+			},
+			notWant: []string{`"ts_rank_normalization"`, `"rrf_k"`},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			encoded, err := json.MarshalIndent(tc.ranking, "", "  ")
+			if err != nil {
+				t.Fatalf("json.MarshalIndent: %v", err)
+			}
+
+			assertJSONHas(t, string(encoded), tc.want)
+			assertJSONLacks(t, string(encoded), tc.notWant)
+		})
+	}
+}
+
+// assertJSONHas は挙げた断片がすべて出ていることを見る。
+func assertJSONHas(t *testing.T, encoded string, keys []string) {
+	t.Helper()
+
+	for _, key := range keys {
+		if !strings.Contains(encoded, key) {
+			t.Errorf("JSON に %s が無い:\n%s", key, encoded)
+		}
+	}
+}
+
+// assertJSONLacks は挙げた断片が1つも出ていないことを見る。
+//
+// 🔑 「出ていないこと」を見る側がこの修正の本題である。測っていない条件が
+// レポートに載ると、読み手はそれを測ったものとして扱う。
+func assertJSONLacks(t *testing.T, encoded string, keys []string) {
+	t.Helper()
+
+	for _, key := range keys {
+		if strings.Contains(encoded, key) {
+			t.Errorf("JSON に %s が出ている。測っていない条件を書かないこと:\n%s", key, encoded)
+		}
+	}
+}
+
+// TestAlphaIsRecordedAsTheDecimalThatWasGiven は、alpha が float32 の丸めを
+// 帯びずに JSON へ出ることを見る。
+//
+// 🔴 v3 までは conditions.alpha が float32 だったので、0.6 が
+// "alpha": 0.6000000238418579 と刻まれ、レポートを機械で突き合わせる側で
+// == 0.6 が偽になった。数字を読み違える経路であって、丸めの美観の話ではない。
+func TestAlphaIsRecordedAsTheDecimalThatWasGiven(t *testing.T) {
+	for _, alpha := range []float64{0.6, 0.85, 0} {
+		t.Run(strconv.FormatFloat(alpha, 'f', -1, 64), func(t *testing.T) {
+			conditions := jsonTestMeasurement().Conditions
+			conditions.Alpha = alpha
+
+			encoded, err := json.Marshal(conditions)
+			if err != nil {
+				t.Fatalf("json.Marshal: %v", err)
+			}
+
+			want := `"alpha":` + strconv.FormatFloat(alpha, 'f', -1, 64)
+			if !strings.Contains(string(encoded), want) {
+				t.Errorf("JSON に %s が無い。float32 の丸めが載っている:\n%s", want, encoded)
+			}
+		})
+	}
+}
+
 // jsonTestMeasurement は JSON 書き出しの検査に使う計測結果を返す。
 //
 // テスト本体から切り出してあるのは、レポートの様式が増えるたびにリテラルが
@@ -208,15 +302,32 @@ func jsonTestMeasurement() eval.Measurement {
 	}
 }
 
-// testReportRanking はレポートの検査に使う順位付け条件の記録。
+// testReportRanking はレポートの検査に使う順位付け条件の記録（postgres 形）。
 //
 // internal/eval はこの中身を解釈しない。JSON に項目が出ることだけが要求である。
+//
+// 🔴 TsRankNormalization は 0 を**指す**。postgres では 0 が実際に使っている
+// 値なので、「無い」ではなく「0 で測った」として記録されなければならない。
 func testReportRanking() eval.RankingSettings {
 	return eval.RankingSettings{
 		Fusion: "weighted-sum", Store: "postgres", LexicalScorer: "ts_rank",
-		TsRankNormalization: 0, RRFK: 60,
+		TsRankNormalization: intPtr(0), RRFK: intPtr(60),
 	}
 }
+
+// testSQLiteRanking は sqlite 形の記録。postgres 専用の2項目を持たない。
+func testSQLiteRanking() eval.RankingSettings {
+	return eval.RankingSettings{
+		Fusion: "weighted-sum", Store: "sqlite", LexicalScorer: "fts5-bm25",
+		TsRankNormalization: nil, RRFK: nil,
+	}
+}
+
+// intPtr は「値がある」ことを表すポインタを作る。
+//
+// ポインタなのは nil（そのストアにそのつまみが無い）と 0（0 で測った）を
+// 区別するためなので、テスト側にも同じ区別が要る。
+func intPtr(v int) *int { return &v }
 
 // testReportInputs はレポートの検査に使う入力の同一性。
 func testReportInputs() eval.Inputs {
