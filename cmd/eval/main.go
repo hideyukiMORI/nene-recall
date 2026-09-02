@@ -216,7 +216,55 @@ type flags struct {
 	// config.Tokenizer を名乗る」経路が1つ増える。rawOrg・fusion・store と
 	// 同じ扱いである。
 	tokenizer string
-	gpuNote   string
+	// distractors は正解にならない紛れ込みの JSONL。空なら投入しない。
+	//
+	// 🔴 testdata/eval/ は1バイトも変えない。10万件は別のファイルとして渡し、
+	// 正解注釈には一切触れない (docs/adr/0019-large-scale-benchmark-corpus.md)。
+	distractors string
+	// embedCache は埋め込みを貯めるディレクトリ。空なら貯めない。
+	embedCache string
+	gpuNote    string
+}
+
+// distractorSet は投入する紛れ込みと、その同一性の記録。
+//
+// 🔴 2つを1つの値で持つ。片方だけを運べる形にすると、投入したのに記録が
+// 無いレポート（またはその逆）が作れてしまう。eval.Measure が拒否はするが、
+// そもそも作れない形にしておくほうが安い。
+type distractorSet struct {
+	items []eval.Distractor
+	// record は nil なら「紛れ込み無しで測った」を意味する。
+	record *eval.FileInput
+}
+
+// embedders は計測に使う埋め込みの口。
+//
+// 🔴 クエリ側と取り込み側を分けて持つ。同じ Embedder を両方に使うと、
+// -embed-cache を付けたときにクエリの埋め込みまでディスクから返り、
+// 系統1（埋め込み往復を含む）が系統2 と同じものになる
+// (docs/adr/0019-large-scale-benchmark-corpus.md Decision 3)。
+type embedders struct {
+	// query はクエリ側。常に素の Ollama クライアントである。
+	//
+	// 具体型で持つのは、環境の記録（版・モデル digest）を読む Runtime が
+	// embed.Embedder の契約に無いからである。
+	query *ollama.Client
+	// document は取り込み側。-embed-cache があればラップされている。
+	document embed.Embedder
+	// cache は当たり外れの件数。使っていなければ nil。
+	cache *cachingEmbedder
+}
+
+// evalInput は計測に渡す入力一式。
+//
+// 引数を4つ以下に保つための入れ物 (GO-011)。
+type evalInput struct {
+	// dataset は評価コーパス・クエリ・紛れ込み。
+	dataset eval.Dataset
+	// inputs は3ファイルの同一性の記録。レポートにそのまま載る。
+	inputs eval.Inputs
+	// distractors は紛れ込みの同一性の記録。投入していなければ nil。
+	distractors *eval.FileInput
 }
 
 // session は1回の実行の入力一式。引数を4つ以下に保つための入れ物 (GO-011)。
@@ -319,6 +367,12 @@ func parseFlags() (flags, error) {
 	flag.StringVar(&opts.tokenizer, "tokenizer", tokenizerNameBigram,
 		"語彙分割器: "+tokenizerNameBigram+" | "+tokenizerNameKagome+
 			"（既定は bigram。kagome は比較実測用・ADR 0018）")
+	flag.StringVar(&opts.distractors, "distractors", "",
+		"正解にならない紛れ込みの JSONL（省略可・ADR 0019）。"+
+			"評価コーパスの投入後にバッチで投入する。正解注釈には一切触れない")
+	flag.StringVar(&opts.embedCache, "embed-cache", "",
+		"埋め込みを貯めるディレクトリ（省略可・ADR 0019）。"+
+			"クエリ側はキャッシュしないので系統1 の latency は変わらない")
 	flag.StringVar(&opts.gpuNote, "gpu-note", "",
 		"GPU の占有状況などの自己申告。レポートにそのまま載る")
 	flag.Parse()
@@ -332,19 +386,17 @@ func parseFlags() (flags, error) {
 
 // run は評価セットを読み、計測し、レポートを書く。
 func (s session) run(ctx context.Context) error {
-	// 🔴 eval.LoadDataset は整合性の検査まで済ませて返す。dangling な正解キーを
-	// 抱えたまま測ると、症状は「recall が低い」だけになり、原因が注釈だと分からない。
-	data, err := loadDataset(s.opts)
+	in, err := loadInput(s.opts)
 	if err != nil {
 		return err
 	}
 
-	embedder, err := s.buildEmbedder()
+	emb, err := s.buildEmbedders()
 	if err != nil {
 		return err
 	}
 
-	target, err := s.openEvalStore(ctx, embedder)
+	target, err := s.openEvalStore(ctx, emb.document)
 	if err != nil {
 		return err
 	}
@@ -355,17 +407,19 @@ func (s session) run(ctx context.Context) error {
 		}
 	}()
 
-	measurement, err := s.measure(ctx, target, embedder, data.Dataset)
+	measurement, err := s.measure(ctx, target, emb.query, in)
 	if err != nil {
 		return err
 	}
 
-	environment, err := s.environment(ctx, target, embedder)
+	s.logCache(emb.cache)
+
+	environment, err := s.environment(ctx, target, emb.query)
 	if err != nil {
 		return err
 	}
 
-	report := eval.NewReport(environment, data.Inputs, measurement, time.Now())
+	report := eval.NewReport(environment, in.inputs, measurement, time.Now())
 	if err := writeReport(s.opts.out, report); err != nil {
 		return err
 	}
@@ -620,7 +674,7 @@ func resetDatabase(ctx context.Context, admin *sql.DB) error {
 
 // measure は計測ループを組み立てて走らせる。
 func (s session) measure(
-	ctx context.Context, target evalStore, embedder embed.Embedder, ds eval.Dataset,
+	ctx context.Context, target evalStore, embedder embed.Embedder, in evalInput,
 ) (eval.Measurement, error) {
 	runner, err := eval.NewRunner(eval.Dependencies{
 		Writer:         target.store,
@@ -632,12 +686,12 @@ func (s session) measure(
 		return eval.Measurement{}, fmt.Errorf("build runner: %w", err)
 	}
 
-	options, err := s.measureOptions(target)
+	options, err := s.measureOptions(target, in.distractors)
 	if err != nil {
 		return eval.Measurement{}, err
 	}
 
-	measurement, err := runner.Measure(ctx, ds, options)
+	measurement, err := runner.Measure(ctx, in.dataset, options)
 	if err != nil {
 		return eval.Measurement{}, fmt.Errorf("measure: %w", err)
 	}
@@ -651,7 +705,9 @@ func (s session) measure(
 // 「指定したつもりの条件」と「実際に使われた条件」がずれる。レポートは後者で
 // なければ意味が無い。ranking は組み立てた場所で写し替えてあるので運ぶだけで、
 // alpha_note も同じ理由で target.ranking.Store から選ぶ。
-func (s session) measureOptions(target evalStore) (eval.Options, error) {
+func (s session) measureOptions(
+	target evalStore, distractors *eval.FileInput,
+) (eval.Options, error) {
 	orgID, err := org.NewID(s.opts.rawOrg)
 	if err != nil {
 		return eval.Options{}, fmt.Errorf("org id: %w", err)
@@ -674,6 +730,11 @@ func (s session) measureOptions(target evalStore) (eval.Options, error) {
 		Limit:     s.opts.limit,
 		Rounds:    s.opts.rounds,
 		Ranking:   target.ranking,
+		// 🔴 フラグの値ではなく、実際に読んだファイルの記録を渡す。
+		// -distractors を指定してもファイルが空なら LoadDistractorFile が
+		// 止めるので、ここに来る record は必ず投入されるものと一致する。
+		Distractors: distractors,
+		EmbedCache:  s.opts.embedCache != "",
 	}, nil
 }
 
@@ -872,6 +933,92 @@ func readBuildStamp() buildStamp {
 	return stamp
 }
 
+// loadInput は評価セットと紛れ込みを読み、計測へ渡す形にする。
+//
+// 🔴 eval.LoadDataset は整合性の検査まで済ませて返す。dangling な正解キーを
+// 抱えたまま測ると、症状は「recall が低い」だけになり、原因が注釈だと分からない。
+func loadInput(opts flags) (evalInput, error) {
+	data, err := loadDataset(opts)
+	if err != nil {
+		return evalInput{}, err
+	}
+
+	set, err := loadDistractors(opts.distractors)
+	if err != nil {
+		return evalInput{}, err
+	}
+
+	// 🔴 紛れ込みは Dataset の別の欄に入れる。Passages に混ぜないので、
+	// 正解注釈の検査は 259 件だけを見たままである
+	// (docs/adr/0019-large-scale-benchmark-corpus.md Decision 2)。
+	data.Dataset.Distractors = set.items
+
+	return evalInput{
+		dataset:     data.Dataset,
+		inputs:      data.Inputs,
+		distractors: set.record,
+	}, nil
+}
+
+// loadDistractors は -distractors のファイルを読む。指定が無ければ空を返す。
+func loadDistractors(path string) (distractorSet, error) {
+	if path == "" {
+		return distractorSet{items: nil, record: nil}, nil
+	}
+
+	source, err := readSource(path)
+	if err != nil {
+		return distractorSet{}, err
+	}
+
+	items, input, err := eval.LoadDistractorFile(source)
+	if err != nil {
+		return distractorSet{}, fmt.Errorf("load distractors: %w", err)
+	}
+
+	return distractorSet{items: items, record: &input}, nil
+}
+
+// buildEmbedders は計測に使う2つの口を組み立てる。
+//
+// 🔴 1つの関数で両方を返すのは、「クエリ側は素・取り込み側はラップ」という
+// 対応を配線の1箇所で決め切るためである。別々に組み立てられる形にすると、
+// 呼び出し側の取り違えでクエリ側にキャッシュが入り、系統1 の latency が
+// 埋め込み往復を含まなくなる (ADR 0019 Decision 3)。
+func (s session) buildEmbedders() (embedders, error) {
+	client, err := s.buildEmbedder()
+	if err != nil {
+		return embedders{}, err
+	}
+
+	if s.opts.embedCache == "" {
+		return embedders{query: client, document: client, cache: nil}, nil
+	}
+
+	cache, err := newCachingEmbedder(client, s.opts.embedCache)
+	if err != nil {
+		return embedders{}, err
+	}
+
+	return embedders{query: client, document: cache, cache: cache}, nil
+}
+
+// logCache はキャッシュの当たり外れを標準エラーへ出す。
+//
+// 🔴 標準出力ではない。stdout には計測の要約が JSON で出るので、道具の
+// 動作記録を混ぜない。キャッシュの件数は計測結果ではなく、実行の様子である。
+func (s session) logCache(cache *cachingEmbedder) {
+	if cache == nil {
+		return
+	}
+
+	slog.New(slog.NewJSONHandler(os.Stderr, nil)).Info("embedding cache",
+		slog.String("dir", s.opts.embedCache),
+		slog.Int64("hits", cache.Hits()),
+		slog.Int64("misses", cache.Misses()),
+	)
+}
+
 // loadDataset は3つのファイルを読んで評価セットにする。
 //
 // 開くのがここの仕事で、解析・ハッシュ・整合性の検査は internal/eval が持つ
@@ -959,8 +1106,22 @@ func (s session) logSummary(report eval.Report) {
 		slog.Float64("micro_recall", summary.MicroRecall.Value),
 		// 名指しの長文 gold がどれだけ拾えたか。Q-1 の交絡要因の見張りである。
 		slog.Float64("long_chunk_recall", summary.LongChunkRecall.Value),
+		// 🔴 紛れ込みの件数を必ず出す。259 件だけで測った数字と 10万件の中で
+		// 測った数字は、端末の出力では区別がつかない (ADR 0019 Decision 2)。
+		slog.Int("distractors", distractorCount(report.Conditions.Distractors)),
 		slog.Float64("p95_with_embedding_ms", summary.Latency.WithEmbedding.P95MS),
 		slog.Float64("p95_without_embedding_ms", summary.Latency.WithoutEmbedding.P95MS),
 		slog.String("model_digest", report.Environment.ModelDigest),
 	)
+}
+
+// distractorCount は記録から紛れ込みの件数を取り出す。
+//
+// nil は「紛れ込み無しで測った」を意味するので 0 になる。
+func distractorCount(record *eval.FileInput) int {
+	if record == nil {
+		return 0
+	}
+
+	return record.Count
 }

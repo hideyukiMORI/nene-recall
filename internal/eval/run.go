@@ -34,6 +34,20 @@ const DefaultRounds = 5
 // 1サンプル混ざるだけで p95 が壊れる。
 const WarmupRounds = 1
 
+// IngestBatchSize は1回の Put に渡すチャンク数の上限。
+//
+// 🔴 10万件を1回の Put に渡さない。Store.Put は1回の呼び出しが1トランザクション
+// であり、全件の埋め込みを1度のメモリ上に載せてから1本のトランザクションで
+// 挿入する (internal/store/postgres/writer.go)。10万件では埋め込みだけで
+// 約18分かかり、その間ずっと接続を握り続けることになる
+// (docs/adr/0019-large-scale-benchmark-corpus.md)。
+//
+// 🔑 分割しても Put の契約は壊れない。「入力と同じ順の id を返す」は1回の
+// 呼び出しの中の話であり、バッチを順に繋げれば全体の順序はそのまま保たれる
+// (ADR 0013)。1,000 は「埋め込みの往復を細切れにしない」と「1トランザクションに
+// 詰め込みすぎない」の間で選んだ値で、測って選んだ値ではない。
+const IngestBatchSize = 1000
+
 // GoldLengthThreshold は gold チャンクを長短に分ける文字数の閾値。
 //
 // 🔑 520 は評価セット自身が分割に使っている値である
@@ -127,6 +141,18 @@ type Options struct {
 	// TokenizerID は拒否する——条件の記録が欠けたレポートは後から条件を
 	// 特定できない。
 	Ranking RankingSettings
+	// Distractors は紛れ込みの入力の同一性。投入していなければ nil。
+	//
+	// 🔴 Dataset.Distractors と必ず対で渡す。片方だけの状態は Measure が
+	// 拒否する。件数と sha256 の記録が無いレポートは、紛れ込みの無い数字と
+	// 並べて読めない (docs/adr/0019-large-scale-benchmark-corpus.md Decision 2)。
+	Distractors *FileInput
+	// EmbedCache は埋め込みをディスクから再利用したか。
+	//
+	// 🔑 latency の読み方に効くので記録する。取り込み側の埋め込みがキャッシュ
+	// から返る実行では、投入の所要時間は GPU の速さを表さない。クエリ側は
+	// キャッシュしないので系統1 の数字は変わらない (ADR 0019 Decision 3)。
+	EmbedCache bool
 }
 
 // Runner は評価を実行する。
@@ -186,8 +212,19 @@ func (r *Runner) Measure(ctx context.Context, ds Dataset, opts Options) (Measure
 		return Measurement{}, err
 	}
 
+	if err := ds.validateDistractors(opts.Distractors); err != nil {
+		return Measurement{}, err
+	}
+
 	keys, err := r.ingest(ctx, opts.OrgID, ds.Passages)
 	if err != nil {
+		return Measurement{}, err
+	}
+
+	// 🔴 紛れ込みは評価コーパスの**後**に投入する。先に入れると、写像を作る
+	// 前の Put が混ざって「入力と同じ順の id」を数え違える余地が生まれる。
+	// 後から足すぶんには、既に確定した eval_key → id の対応は動かない。
+	if err := r.ingestDistractors(ctx, opts.OrgID, ds.Distractors, keys); err != nil {
 		return Measurement{}, err
 	}
 
@@ -254,7 +291,93 @@ func (o Options) conditions() Conditions {
 		LongChunkKeys:            LongGoldKeys(),
 		Ranking:                  o.Ranking,
 		PercentileMethod:         PercentileMethod,
+		Distractors:              o.Distractors,
+		EmbedCache:               o.EmbedCache,
 	}
+}
+
+// validateDistractors は紛れ込みの中身・記録・正解キーの整合を計測の前に見る。
+func (d Dataset) validateDistractors(record *FileInput) error {
+	if err := validateDistractorRecord(d.Distractors, record); err != nil {
+		return err
+	}
+
+	return keyPrefixConflict(d.Passages)
+}
+
+// ingestDistractors は紛れ込みをバッチに割って投入し、写像へ足す。
+//
+// 🔴 ここで作る表示名は正解注釈から参照されない。それでも写像に入れるのは、
+// rankedEntries が「写像に無い id」を止めるからである。紛れ込みが上位に
+// 入ることは想定された結果であって、汚染ではない——止めてしまうと
+// 「押し出しが起きた瞬間に計測が落ちる」ハーネスになる
+// (docs/adr/0019-large-scale-benchmark-corpus.md Decision 2)。
+func (r *Runner) ingestDistractors(
+	ctx context.Context, orgID org.ID, distractors []Distractor, keys map[int64]string,
+) error {
+	for start := 0; start < len(distractors); start += IngestBatchSize {
+		end := min(start+IngestBatchSize, len(distractors))
+
+		if err := r.putDistractors(ctx, orgID, distractors[start:end], keys); err != nil {
+			return fmt.Errorf("distractors [%d,%d): %w", start, end, err)
+		}
+	}
+
+	return nil
+}
+
+// putDistractors は1バッチを投入して写像へ足す。
+func (r *Runner) putDistractors(
+	ctx context.Context, orgID org.ID, batch []Distractor, keys map[int64]string,
+) error {
+	ids, err := r.deps.Writer.Put(ctx, orgID, distractorChunks(orgID, batch))
+	if err != nil {
+		return fmt.Errorf("%w: put distractors: %w", ErrMeasure, err)
+	}
+
+	if len(ids) != len(batch) {
+		return fmt.Errorf("%w: the writer returned %d ids for %d distractors",
+			ErrMeasure, len(ids), len(batch))
+	}
+
+	for i, id := range ids {
+		if _, dup := keys[id]; dup {
+			return fmt.Errorf("%w: the writer returned id %d twice", ErrMeasure, id)
+		}
+
+		keys[id] = batch[i].Key()
+	}
+
+	return nil
+}
+
+// distractorChunks は紛れ込みを投入できる形にする。
+//
+// 🔴 document_id / source_id は採番しない。ファイルに書かれた値をそのまま使う。
+// 評価コーパスと衝突しない範囲に置くのは生成側 (tools/wikidistract) の責任で、
+// ここで採番し直すとその配慮が消える (ADR 0019 Decision 1)。
+func distractorChunks(orgID org.ID, distractors []Distractor) []chunk.Chunk {
+	chunks := make([]chunk.Chunk, 0, len(distractors))
+
+	for _, d := range distractors {
+		chunks = append(chunks, chunk.Chunk{
+			ID: 0, // 明示 id は受け付けない（Phase 1）
+			// 🔴 紛れ込みにも外部 id は無い。Put が upsert になった今
+			// (ADR 0020)、external_id を入れると同じ鍵の行が上書きされる。
+			// 10万件は「無関係な文書がそこにある」ことだけが役目なので、
+			// 同一性を主張させる理由が無い。
+			ExternalID:   nil,
+			OrgID:        orgID,
+			DocumentID:   d.DocumentID,
+			SourceID:     d.SourceID,
+			ChunkIndex:   d.ChunkIndex,
+			Content:      d.Content,
+			PageNumber:   nil,
+			SectionLabel: nil,
+		})
+	}
+
+	return chunks
 }
 
 // indexQuery は評価クエリを検索要求にする。

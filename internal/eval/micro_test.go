@@ -20,6 +20,7 @@ const longChunkKey = "readme#005"
 // 検索結果に影響しない（偽の索引が順位を決める）。
 func goldLengthDataset() eval.Dataset {
 	return eval.Dataset{
+		Distractors: nil,
 		Passages: []eval.Passage{
 			{Key: "short#001", Source: "short", Content: shortContentA()},
 			// ちょうど閾値。定義は「520字以下が短い側」なのでこちらに入る。

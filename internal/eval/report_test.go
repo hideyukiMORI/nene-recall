@@ -72,6 +72,8 @@ func TestNewReportCarriesEnvironmentAndInputs(t *testing.T) {
 			LongChunkKeys:            eval.LongGoldKeys(),
 			Ranking:                  testReportRanking(),
 			PercentileMethod:         eval.PercentileMethod,
+			Distractors:              nil,
+			EmbedCache:               false,
 		},
 		Queries: nil,
 		Summary: eval.Summary{
@@ -267,6 +269,8 @@ func jsonTestMeasurement() eval.Measurement {
 			LongChunkKeys:            eval.LongGoldKeys(),
 			Ranking:                  testReportRanking(),
 			PercentileMethod:         eval.PercentileMethod,
+			Distractors:              nil,
+			EmbedCache:               false,
 		},
 		Queries: []eval.QueryReport{{
 			QueryID: "q-1", Text: "問い", Tags: []string{"語彙一致"},
