@@ -73,11 +73,7 @@ func roundTripTokenizers(t *testing.T) []roundTripTokenizer {
 // **形**であり、形態素で分割すればトークン自体が別物になる。両方に同じ表を
 // 当てるのではなく、分割器に依存しない性質（次の2つのテスト）を両方で回す。
 func TestLexemeRoundTrip(t *testing.T) {
-	ts := newTestStoreWith(t, storeSpec{
-		embedder:  newFakeEmbedder("fake:1024"),
-		tokenizer: bigram.New(),
-		fusion:    postgres.FusionWeightedSum,
-	})
+	ts := newTestStoreWith(t, tokenizedSpec(bigram.New()))
 	orgA := mustOrgID(t, 1)
 
 	for i, tc := range lexemeRoundTripCases() {
@@ -173,11 +169,7 @@ func TestLexemeRoundTripMatchesItsOwnQuery(t *testing.T) {
 
 	for _, tc := range roundTripTokenizers(t) {
 		t.Run(tc.name, func(t *testing.T) {
-			ts := newTestStoreWith(t, storeSpec{
-				embedder:  newFakeEmbedder("fake:1024"),
-				tokenizer: tc.tokenizer,
-				fusion:    postgres.FusionWeightedSum,
-			})
+			ts := newTestStoreWith(t, tokenizedSpec(tc.tokenizer))
 
 			for i, content := range contents {
 				assertMatchesItsOwnQuery(t, ts, tc.tokenizer, chunkSpec{
@@ -217,11 +209,7 @@ func assertMatchesItsOwnQuery(
 // （RECALL_STORE・正解4件）を救うのはこの精度であり、ここが緩むと語彙検索は
 // 偽ヒットで recall を下げる方向に働く。
 func TestLexemeRoundTripKeepsIdentifiersPrecise(t *testing.T) {
-	ts := newTestStoreWith(t, storeSpec{
-		embedder:  newFakeEmbedder("fake:1024"),
-		tokenizer: bigram.New(),
-		fusion:    postgres.FusionWeightedSum,
-	})
+	ts := newTestStoreWith(t, tokenizedSpec(bigram.New()))
 	orgA := mustOrgID(t, 1)
 
 	target := putContent(t, ts, chunkSpec{
@@ -322,11 +310,7 @@ func TestLexemeRoundTripLosesAdjacencyWithMorphemes(t *testing.T) {
 		t.Fatalf("kagome.New(): %v", err)
 	}
 
-	ts := newTestStoreWith(t, storeSpec{
-		embedder:  newFakeEmbedder("fake:1024"),
-		tokenizer: morphological,
-		fusion:    postgres.FusionWeightedSum,
-	})
+	ts := newTestStoreWith(t, tokenizedSpec(morphological))
 	orgA := mustOrgID(t, 1)
 
 	target := putContent(t, ts, chunkSpec{

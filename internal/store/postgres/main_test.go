@@ -96,16 +96,50 @@ type storeSpec struct {
 	embedder  embed.Embedder
 	tokenizer lexical.Tokenizer
 	fusion    postgres.Fusion
+	// searchMode は候補集合の作り方。既定は現行の全探索である。
+	searchMode postgres.SearchMode
+	// candidateK / efSearch は候補モードのときだけ意味を持つ。
+	candidateK int
+	efSearch   int
 }
 
 // defaultStoreSpec は既定の指定を返す。
 //
-// 融合方式の既定は加重和である（既定を変えるのは実測を見て ADR を書いてから）。
+// 融合方式の既定は加重和、候補の作り方の既定は全探索である
+// （どちらも既定を変えるのは実測を見て ADR を書いてから・ADR 0015 / ADR 0022）。
 func defaultStoreSpec(e embed.Embedder) storeSpec {
 	return storeSpec{
-		embedder:  e,
-		tokenizer: newFakeTokenizer("fake-tokenizer:1"),
-		fusion:    postgres.FusionWeightedSum,
+		embedder:   e,
+		tokenizer:  newFakeTokenizer("fake-tokenizer:1"),
+		fusion:     postgres.FusionWeightedSum,
+		searchMode: postgres.SearchModeExhaustive,
+		candidateK: postgres.DefaultCandidateK,
+		efSearch:   postgres.DefaultEfSearch,
+	}
+}
+
+// tokenizedSpec は分割器だけを差し替えた既定の指定を返す。
+//
+// 実物の分割器を使うのは往復同一性テストだけである（それ以外は fakeTokenizer）。
+func tokenizedSpec(tokenizer lexical.Tokenizer) storeSpec {
+	spec := defaultStoreSpec(newFakeEmbedder("fake:1024"))
+	spec.tokenizer = tokenizer
+
+	return spec
+}
+
+// storeOptions は指定を postgres.Options に写す。
+//
+// 🔑 写し替えを1箇所にまとめてある。Options にフィールドが増えたとき、
+// 直すのはこの関数だけになる。
+func storeOptions(spec storeSpec) postgres.Options {
+	return postgres.Options{
+		Embedder:   spec.embedder,
+		Tokenizer:  spec.tokenizer,
+		Fusion:     spec.fusion,
+		SearchMode: spec.searchMode,
+		CandidateK: spec.candidateK,
+		EfSearch:   spec.efSearch,
 	}
 }
 
@@ -123,7 +157,7 @@ func newTestStoreWith(t *testing.T, spec storeSpec) *testStore {
 		t.Fatalf("テスト用 DB へ接続できない: %v", err)
 	}
 
-	store, err := postgres.New(db, spec.embedder, spec.tokenizer, spec.fusion)
+	store, err := postgres.New(db, storeOptions(spec))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -246,7 +280,7 @@ func attachStoreWith(t *testing.T, spec storeSpec) *postgres.Store {
 		t.Fatalf("テスト用 DB へ接続できない: %v", err)
 	}
 
-	store, err := postgres.New(db, spec.embedder, spec.tokenizer, spec.fusion)
+	store, err := postgres.New(db, storeOptions(spec))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

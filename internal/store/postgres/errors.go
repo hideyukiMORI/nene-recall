@@ -54,6 +54,20 @@ var errEmbedderID = errors.New("postgres: embedder returned an empty identifier"
 // 記録され、後から条件を取り違える。計測の条件は必ず明示的に決まること。
 var errUnknownFusion = errors.New("postgres: unknown fusion method")
 
+// errUnknownSearchMode は未知の候補の作り方が指定されたことを表す。
+//
+// 🔴 errUnknownFusion と同じ理由で既定へ倒さない。綴り誤りが「exhaustive で
+// 測った」結果として記録されると、索引の before/after を取り違える
+// (docs/adr/0022-indexed-candidate-search.md Decision 3)。
+var errUnknownSearchMode = errors.New("postgres: unknown search mode")
+
+// errCandidateK は候補モードの K が使えない値であることを表す。
+//
+// 🔴 K < 1 は候補が空になる構成、K > hnsw.ef_search は HNSW が K 件を返せない
+// 構成である。どちらも「エラーにならないまま recall が少し低い」という形でしか
+// 表面化しないので、構築時に落とす (ADR 0022 Decision 4)。
+var errCandidateK = errors.New("postgres: candidate K is out of range")
+
 // errTokenizerID は Tokenizer が無い、または空の識別子を返したことを表す。
 //
 // tokenizer_id 列も空文字を拒否する CHECK を持つ。理由は errEmbedderID と同じ。

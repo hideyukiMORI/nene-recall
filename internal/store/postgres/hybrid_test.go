@@ -8,7 +8,6 @@ import (
 	"github.com/hideyukiMORI/nene-recall/internal/embed"
 	"github.com/hideyukiMORI/nene-recall/internal/index"
 	"github.com/hideyukiMORI/nene-recall/internal/org"
-	"github.com/hideyukiMORI/nene-recall/internal/store/postgres"
 )
 
 // scoreTolerance は SQL(float8) と Go(float32) の丸め差の許容幅。
@@ -343,11 +342,10 @@ func TestSearchDoesNotLeakAcrossOrgsViaLexicalMatch(t *testing.T) {
 // 取り込み側だけを検査すると、分割器を差し替えた人は「取り込みは通るのに検索が
 // 構文エラーで落ちる」という遠い症状を見ることになる。
 func TestSearchRejectsBrokenTokensFromTheQuery(t *testing.T) {
-	ts := newTestStoreWith(t, storeSpec{
-		embedder:  newFakeEmbedder("fake:1024"),
-		tokenizer: brokenTokenizer{tokens: []string{"a|b"}},
-		fusion:    postgres.FusionWeightedSum,
-	})
+	spec := defaultStoreSpec(newFakeEmbedder("fake:1024"))
+	spec.tokenizer = brokenTokenizer{tokens: []string{"a|b"}}
+
+	ts := newTestStoreWith(t, spec)
 
 	_, err := ts.store.Search(t.Context(), newQuery(querySpec{
 		orgID: mustOrgID(t, 1), text: "何か", limit: 10, alpha: 0.7,

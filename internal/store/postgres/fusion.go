@@ -141,28 +141,54 @@ type RankingSettings struct {
 	// RRFK は RRF の平滑化定数。方式が RRF でなくても記録する
 	// （条件表が方式によって欠けると、並べて読めなくなる）。
 	RRFK int
+	// SearchMode は候補集合の作り方（"exhaustive" / "candidates"）。
+	//
+	// 🔴 alpha と融合方式だけでは条件が決まらない。候補の作り方が変わると
+	// 語彙スコアの正規化に使う最大値の母集団が変わり、同じ alpha が別の
+	// 効き方をする (ADR 0022 Consequences)。これが無いレポートは、索引を
+	// 入れた後の数字を入れる前の数字と並べて読めない。
+	SearchMode string
+	// CandidateK は候補モードの両側 top-K。
+	//
+	// 🔴 ポインタなのは「無い」と「0」を区別するためである。exhaustive では
+	// K というつまみがそもそも存在しないので nil にする。0 を入れると
+	// 「K=0 で測った」と読め、それは candidates では起こりえない条件である
+	// （New が K < 1 を拒否する）。TsRankNormalization を sqlite で nil に
+	// したのと同じ判断である（様式 v4）。
+	CandidateK *int
+	// EfSearch は HNSW の探索幅 hnsw.ef_search。CandidateK と同じ理由で
+	// ポインタであり、exhaustive では nil になる。
+	//
+	// 🔑 exhaustive では索引そのものが使われないので、探索幅は結果にも
+	// latency にも影響しない。記録すると「効いていた条件」に見える。
+	EfSearch *int
 }
 
-// statement は方式に応じた SQL と、その方式が使う $8 の値を返す。
+// statement は方式と候補の作り方に応じた SQL と、その方式が使う $8 の値を返す。
 //
 // 🔴 $8 は方式ごとに意味が違う（方式A は alpha、方式B は RRF の k）。
 // 番号を共有しているのは、参照されない引数があると PostgreSQL が型を決められず
 // Parse に失敗するためで、意味が同じだからではない。
 //
 // 🔴 switch は exhaustive linter が網羅を強制する。方式を足したのに SQL を
-// 足し忘れる、という形の抜けを lint で捕まえる。末尾の return は、範囲外の int を
-// Fusion に変換された場合の番人である (GO-003)。New が構築時に弾いているので
-// 通常はここに来ないが、番人が無いと「SQL が空文字」という読めない失敗になる。
+// 足し忘れる、という形の抜けを lint で捕まえる。文の選択そのものは
+// searchStatement（searchmode.go）が持つ——候補の作り方と方式の2軸を1つの
+// switch に畳むと GO-011 の複雑度に掛かり、組み合わせの抜けも読みにくくなる。
 //
-// 🔑 Store ではなく Fusion のメソッドにしてあるのは、これが方式そのものの
+// 🔑 Store ではなく Fusion のメソッドにしてあるのは、$8 の意味が方式そのものの
 // 性質だからである。ストアの状態を1つも見ない。
-func (f Fusion) statement(alpha float32) (string, any, error) {
+func (f Fusion) statement(mode SearchMode, alpha float32) (string, any, error) {
+	statement, err := searchStatement(mode, f)
+	if err != nil {
+		return "", nil, err
+	}
+
 	switch f {
 	case FusionWeightedSum:
-		return searchWeightedSumSQL, alpha, nil
+		return statement, alpha, nil
 	case FusionRRF:
 		// alpha は使わない。重みを表す場所がこの方式には無い。
-		return searchRRFSQL, RRFK, nil
+		return statement, RRFK, nil
 	}
 
 	return "", nil, fmt.Errorf("%w: %d", errUnknownFusion, int(f))
