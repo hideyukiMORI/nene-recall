@@ -20,8 +20,10 @@ import (
 	"github.com/hideyukiMORI/nene-recall/internal/embed"
 	"github.com/hideyukiMORI/nene-recall/internal/embed/ollama"
 	"github.com/hideyukiMORI/nene-recall/internal/httpapi"
+	"github.com/hideyukiMORI/nene-recall/internal/index"
 	"github.com/hideyukiMORI/nene-recall/internal/lexical/bigram"
 	"github.com/hideyukiMORI/nene-recall/internal/store/postgres"
+	"github.com/hideyukiMORI/nene-recall/internal/store/sqlite"
 )
 
 // ollamaTimeout は埋め込み1リクエストの上限。
@@ -43,8 +45,11 @@ const shutdownTimeout = 10 * time.Second
 // errVoyageNotImplemented は Voyage 経路が未実装であることを表す。
 var errVoyageNotImplemented = errors.New("recall: the voyage embedder is not implemented yet")
 
-// errSQLiteNotImplemented は SQLite ストアが未実装であることを表す。
-var errSQLiteNotImplemented = errors.New("recall: the sqlite store is not implemented yet")
+// errUnknownStore は設定が未知のストアを指していることを表す。
+//
+// config.validateStore が既に弾いているので、通常はここへ来ない。番人が
+// 無いと「どのストアも組み立てられなかった」が nil のストアとして先へ進む。
+var errUnknownStore = errors.New("recall: unknown store")
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -150,22 +155,44 @@ func buildEmbedder(cfg config.Config) (embedderBundle, error) {
 	return embedderBundle{}, fmt.Errorf("%w: %q", errVoyageNotImplemented, cfg.EmbedProvider)
 }
 
+// backingStore は配線点が扱うストアの口。
+//
+// 🔴 internal/index に足さない。Ping と Close は「検索する」「書き込む」という
+// 契約の一部ではなく、プロセスのライフサイクルの都合である。契約に混ぜると、
+// すべてのストア実装が配線点の都合に付き合わされる（SearchVector を
+// index.Searcher に足さなかったのと同じ判断軸・ADR 0013）。
+//
+// 🔑 2つの具体ストア (postgres / sqlite) が同じ形をしていることを、ここで
+// コンパイル時に確かめている。片方に生えたメソッドがもう片方に無ければ、
+// 配線が通らない。
+type backingStore interface {
+	index.Searcher
+	index.Writer
+
+	// Ping は /readyz の Probe が呼ぶ。
+	Ping(ctx context.Context) error
+	// Close はサーバが止まったあとに呼ぶ。
+	Close() error
+}
+
 // buildStore は設定からストアを組み立て、マイグレーションまで済ませる。
-func buildStore(ctx context.Context, cfg config.Config, embedder embed.Embedder) (*postgres.Store, error) {
+//
+// 🔴 既定は postgres である。sqlite は比較実測のために選べる経路であって、
+// 既定を移すのは実測を見て ADR を書いてからである (ADR 0007 / ADR 0017)。
+func buildStore(ctx context.Context, cfg config.Config, embedder embed.Embedder) (backingStore, error) {
 	switch cfg.Store {
 	case config.StorePostgres:
 		return openPostgres(ctx, cfg, embedder)
 	case config.StoreSQLite:
-		// Phase 1 項目8。比較実測のために作る予定だが、まだ無い。
-		return nil, fmt.Errorf(
-			"%w: set RECALL_STORE=postgres (the default)", errSQLiteNotImplemented)
+		return openSQLite(ctx, cfg, embedder)
 	}
 
-	return nil, fmt.Errorf("%w: %q", errSQLiteNotImplemented, cfg.Store)
+	// config.validate が未知の値を既に拒否しているので、ここへは来ない。
+	return nil, fmt.Errorf("%w: %q", errUnknownStore, cfg.Store)
 }
 
 // openPostgres は接続を開き、次元の突き合わせとマイグレーションを行う。
-func openPostgres(ctx context.Context, cfg config.Config, embedder embed.Embedder) (*postgres.Store, error) {
+func openPostgres(ctx context.Context, cfg config.Config, embedder embed.Embedder) (backingStore, error) {
 	db, err := postgres.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
@@ -189,9 +216,35 @@ func openPostgres(ctx context.Context, cfg config.Config, embedder embed.Embedde
 	return store, nil
 }
 
+// openSQLite はファイルを開き、次元の突き合わせとマイグレーションを行う。
+//
+// 🔑 postgres 側と手順を1つも変えていない。比較実測は「同じ手順で組み立てた
+// 2つのストアを、同じデータで測る」ことが前提であり、配線に差があると
+// その差が結果に混ざる (ADR 0017)。
+//
+// 🔴 融合方式を引数に取らない。sqlite 側は加重和しか実装していないので、
+// 選べるかのような口を配線点に開けない (ADR 0017 Decision 4)。
+func openSQLite(ctx context.Context, cfg config.Config, embedder embed.Embedder) (backingStore, error) {
+	db, err := sqlite.Open(ctx, cfg.DBPath)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+
+	store, err := sqlite.New(db, embedder, bigram.New())
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("build store: %w", err), db.Close())
+	}
+
+	if err := store.Migrate(ctx); err != nil {
+		return nil, errors.Join(fmt.Errorf("migrate: %w", err), store.Close())
+	}
+
+	return store, nil
+}
+
 // buildHandler は HTTP ハンドラを組み立てる。
 func buildHandler(
-	cfg config.Config, log *slog.Logger, store *postgres.Store, bundle embedderBundle,
+	cfg config.Config, log *slog.Logger, store backingStore, bundle embedderBundle,
 ) (http.Handler, error) {
 	srv, err := httpapi.New(cfg, log, httpapi.Dependencies{
 		Searcher:   store,

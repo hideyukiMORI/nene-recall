@@ -28,7 +28,8 @@ type Store string
 const (
 	// StorePostgres は PostgreSQL + pgvector。既定 (ADR 0007)。
 	StorePostgres Store = "postgres"
-	// StoreSQLite は SQLite + Go 側の総当たり内積。比較実測用に残している (ADR 0007)。
+	// StoreSQLite は SQLite + Go 側の総当たり内積。比較実測用に**実装済み**
+	// (ADR 0017)。既定を移すのは実測を見てからである (ADR 0007)。
 	StoreSQLite Store = "sqlite"
 )
 
@@ -52,8 +53,8 @@ type Config struct {
 
 	// Store は永続化バックエンド。RECALL_STORE、既定 "postgres"。
 	//
-	// sqlite を残しているのは、同一データで全探索と pgvector を比較実測するため。
-	// 比較そのものが成果物になる (ADR 0007)。
+	// sqlite があるのは、同一データで Go 側の全探索と pgvector を比較実測する
+	// ため。比較そのものが成果物になる (ADR 0007)。実装は ADR 0017。
 	Store Store
 	// DatabaseURL は Store=postgres のときの接続文字列。RECALL_DATABASE_URL。
 	DatabaseURL string
