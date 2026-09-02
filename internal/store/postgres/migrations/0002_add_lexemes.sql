@@ -72,6 +72,11 @@ CREATE INDEX chunks_tokenizer_idx ON chunks (tokenizer_id);
 
 -- 🔴🔴 lexemes 列に GIN / GiST 索引を作らないこと。
 --
+-- ⚠️ この禁止は 0004_add_search_indexes.sql で**解けている**（2026-09-02）。
+--    「合成の形を先に固めてから」という下の条件は ADR 0022 が満たした——
+--    候補モードの語彙側は @@ で絞ってから ts_rank を計算するので、転置索引が
+--    使われる形になっている。以下は当時の記録として残す。
+--
 -- ベクトル索引を最初から作らないのと同じ理由である
 -- (docs/adr/0007-pgvector-over-brute-force.md)。索引の価値は
 -- 「入れる前と後を測って比べた」ことにあり、最初から張ると before が取れない。
