@@ -44,7 +44,7 @@ Go 製の自己ホスト型 検索・取得サービス。チャンクを取り�
 | フェーズ | 状態 |
 | --- | --- |
 | Phase 0 骨組み・設計判断 | ✅ 完了（2026-09-01） |
-| Phase 1 ローカル完結の検索 API | 🚧 着手（項目 1〜6 完了。残りは 7・8・9） |
+| Phase 1 ローカル完結の検索 API | 🚧 着手（項目 1〜6・8・9 完了。残りは 7 = 実測と HNSW） |
 | Phase 2 Corpus 統合 | 🔲 未着手 |
 
 **動くもの:** **全エンドポイント**。`/v1/chunks` の投入・削除、`/v1/search` の**ハイブリッド検索**
@@ -60,8 +60,16 @@ Go 製の自己ホスト型 検索・取得サービス。チャンクを取り�
 ADR 0014（Q-1/Q-2）と ADR 0015（Q-3）、数字の正本は
 [`docs/benchmarks/2026-09-02-eval-lexical-hybrid.md`](docs/benchmarks/2026-09-02-eval-lexical-hybrid.md)。
 
-🔴 **動かないもの:** `RECALL_EMBEDDER=voyage` と `RECALL_STORE=sqlite` は
-起動時に sentinel エラーで失敗する（設定としては valid だが未実装）。
+**比較用の SQLite ストア（2026-09-02）**: `RECALL_STORE=sqlite` で同じ API が動く（ADR 0017。
+純 Go・ベクトルは Go 側総当たり・語彙は FTS5 `bm25()`）。`make eval EVAL_STORE=sqlite` で同一評価セットを
+測れる。⚠️ **Postgres との比較の実測はまだ正本が無い**（rounds=1 の smoke で `recall@10` 0.722・
+p95 埋め込み除く 203ms と、Postgres の 15ms に対し大きく遅い兆候。正本は比較レーンで取る）。
+
+**CLI `recallctl`（2026-09-02）**: HTTP API の薄いクライアント（ADR 0016）。`make build` が `bin/recallctl` を作る。
+🔴 **`org_id` の既定値 `1` を持つのはこの CLI の定数1箇所だけ**で、サーバ側には無い。使い方は `cmd/recallctl/README.md`。
+
+🔴 **動かないもの:** `RECALL_EMBEDDER=voyage` は起動時に sentinel エラーで失敗する
+（設定としては valid だが未実装）。
 
 **測れるもの:** `make eval` が検索品質を測る。評価セットは**実データ**（259チャンク・58クエリ・
 正解 延べ236件）で、**第二注釈者との突き合わせ済み**（Jaccard 0.874）。
@@ -105,8 +113,13 @@ Q-4（reranker）を「Phase 1 は入れない」と決めた判断は、**こ�
    JSON レポートを書く。評価セットは `testdata/eval/` の**実データ**
    （259チャンク・58クエリ・正解 延べ236件）
 7. **実測と HNSW** — ベンチを取り `docs/benchmarks/` に記録してから索引を入れる。before/after を残す
-8. **SQLite ストア**（比較用）— `RECALL_STORE=sqlite`。同一データでの比較が成果物になる
-9. **CLI** — 個人利用の入口。`org_id` の既定値は**CLI 側に置く。サーバ側には置かない**
+8. ~~**SQLite ストア**~~ — ✅ 完了（ADR 0017）。`internal/store/sqlite`。純 Go の `modernc.org/sqlite`・
+   ベクトルは `BLOB` を Go 側で総当たり・語彙は FTS5（`tokenize='ascii'`）の `bm25()`・合成は加重和のみ。
+   `id` は `AUTOINCREMENT`（再利用させない。ADR 0013 の写像が壊れる）。🔴 `org_id` の絞り込みは
+   `candidateWhere` の**1箇所だけ**。**同一データでの比較の実測が残っている**（成果物はそちら）
+9. ~~**CLI**~~ — ✅ 完了（ADR 0016）。`cmd/recallctl`。HTTP API だけを叩く（ストアにも Ollama にも触らない）。
+   `org_id` は `-org` → `RECALL_ORG_ID` → 定数 `1` の順で決まり、どこから取ったかを毎回 stderr に出す。
+   分割器（文書→チャンク）は**まだ持たない**（Decision 4。句点1文字で類似度が 0.016 動くので当て推量で入れない）
 
 ---
 
@@ -119,8 +132,13 @@ ollama pull bge-m3        # Windows 側で実行
 make check                # 🔴 提出前に必ず通す唯一のゲート。CI もこれを呼ぶ
 make run                  # .env が要る
 make eval                 # 検索品質の計測。.env・Ollama・PostgreSQL が要る
-                          # 例) make eval EVAL_LABEL=alpha-05 GPU_NOTE="他アプリが 5.7GB 使用中"
+                          # 例) make eval EVAL_LABEL=alpha-05 EVAL_ALPHA=0.5 GPU_NOTE="他アプリが 5.7GB 使用中"
+                          # 例) make eval EVAL_STORE=sqlite EVAL_LABEL=sqlite-r5 EVAL_ROUNDS=5
+make build                # bin/recall（サーバ）と bin/recallctl（CLI）
 ```
+
+⚠️ サーバは `.env` を自分では読まない（`internal/config` は `os.Getenv` だけ）。`make run` 以外で手で起動するときは
+`set -a && . ./.env` で環境に流してから起動する。
 
 🔴 **`make eval` は `make check` に含まれていない**（ADR 0013 Decision 5）。
 理由は2つ。(1) CI に Ollama も GPU も無く、偽 Embedder で recall を測っても評価にならない
