@@ -137,6 +137,19 @@ var errOrgMismatch = errors.New("sqlite: chunk org_id does not match the request
 // postgres 側と同じく Phase 1 では受け付けない。
 var errChunkIDNotAccepted = errors.New("sqlite: explicit chunk id is not accepted in phase 1")
 
+// errExternalIDInvalid は external_id に 0 以下が渡されたことを表す。
+//
+// 🔴 「外部 id を持たない」は NULL（Go 側は nil）で表す。0 を通すと、置き換えの
+// 鍵が実在しない 0 番になり、外部 id を持たないはずの行どうしが互いを上書きする。
+var errExternalIDInvalid = errors.New("sqlite: external id must be a positive integer")
+
+// errDuplicateExternalID は1回の Put に同じ external_id が2回現れたことを表す。
+//
+// 🔴 黙って後勝ちにしない。理由は postgres 側と同じで、upsert が成功したうえで
+// 「n 件受理されたのに行は n-1 件」という差がどこにも現れない状態になる
+// (docs/adr/0020-phase2-corpus-integration-contract.md Decision 1・ADR 0013)。
+var errDuplicateExternalID = errors.New("sqlite: the same external id appears twice in one batch")
+
 // ---------------------------------------------------------------------------
 // 検索
 // ---------------------------------------------------------------------------

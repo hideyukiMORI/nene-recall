@@ -52,6 +52,12 @@ func ErrChunkIDNotAccepted() error { return errChunkIDNotAccepted }
 // ErrOrgRequired は errOrgRequired をテストへ公開する。
 func ErrOrgRequired() error { return errOrgRequired }
 
+// ErrExternalIDInvalid は errExternalIDInvalid をテストへ公開する。
+func ErrExternalIDInvalid() error { return errExternalIDInvalid }
+
+// ErrDuplicateExternalID は errDuplicateExternalID をテストへ公開する。
+func ErrDuplicateExternalID() error { return errDuplicateExternalID }
+
 // ErrTokenizerID は errTokenizerID をテストへ公開する。
 func ErrTokenizerID() error { return errTokenizerID }
 

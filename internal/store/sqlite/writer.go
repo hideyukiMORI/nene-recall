@@ -48,11 +48,33 @@ type encodedChunk struct {
 // 🔴 chunks_fts には書かない。3本の trigger が同期する
 // (migrations/0001_create_chunks.sql)。アプリケーションが両方を書く形にすると、
 // 片方だけ更新された行が作れてしまう。
+//
+// 🔑 ON CONFLICT を付けたのは Phase 2 の契約である
+// (docs/adr/0020-phase2-corpus-integration-contract.md Decision 1)。同じ
+// (org_id, external_id) の再投入は置き換えになる。postgres 側と同じ形にしてある。
+//
+// 🔴 external_id が NULL の行はこの分岐に一切入らない。UNIQUE 索引が NULL どうしを
+// 重複とみなさないためで、単体運用の insert-only はそのまま保たれる。
+//
+// 🔴 更新は chunks_fts_after_update trigger が転置索引へ伝える
+// (migrations/0001_create_chunks.sql)。trigger を消すと、置き換えた行の
+// 語彙スコアだけが古い本文のまま残る——エラーにならない壊れ方である。
 const insertChunkSQL = `INSERT INTO chunks (
 	org_id, document_id, source_id, chunk_index, content,
 	page_number, section_label, embedder_id, embedding,
-	lexeme_text, tokenizer_id
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	lexeme_text, tokenizer_id, external_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (org_id, external_id) DO UPDATE SET
+	document_id   = excluded.document_id,
+	source_id     = excluded.source_id,
+	chunk_index   = excluded.chunk_index,
+	content       = excluded.content,
+	page_number   = excluded.page_number,
+	section_label = excluded.section_label,
+	embedder_id   = excluded.embedder_id,
+	embedding     = excluded.embedding,
+	lexeme_text   = excluded.lexeme_text,
+	tokenizer_id  = excluded.tokenizer_id
 RETURNING id`
 
 // Put はチャンクを投入し、採番された id を入力と同じ順で返す。
@@ -108,21 +130,60 @@ func validateChunks(orgID org.ID, chunks []chunk.Chunk) error {
 	}
 
 	for i, c := range chunks {
-		if c.ID != 0 {
-			return fmt.Errorf("%w: chunks[%d] carries id %d", errChunkIDNotAccepted, i, c.ID)
+		if err := validateChunk(i, c, orgID); err != nil {
+			return err
+		}
+	}
+
+	return validateExternalIDsAreDistinct(chunks)
+}
+
+// validateChunk は1件ぶんの契約違反を見る。
+func validateChunk(i int, c chunk.Chunk, orgID org.ID) error {
+	if c.ID != 0 {
+		return fmt.Errorf("%w: chunks[%d] carries id %d", errChunkIDNotAccepted, i, c.ID)
+	}
+
+	if c.Content == "" {
+		return fmt.Errorf("%w: chunks[%d]", errEmptyContent, i)
+	}
+
+	// 🔴 0 と負値を弾く。「外部 id を持たない」は NULL（Go 側は nil）で表す。
+	// 0 を通すと、置き換えの鍵が実在しない 0 番になる。
+	if c.ExternalID != nil && *c.ExternalID < 1 {
+		return fmt.Errorf("%w: chunks[%d] has %d", errExternalIDInvalid, i, *c.ExternalID)
+	}
+
+	// ゼロ値は「Chunk 側が org を持っていない」を意味する。値が入っているのに
+	// 引数と違うときだけ拒否する。黙って引数で上書きすると、呼び出し側の
+	// 取り違えが別テナントへの書き込みとして成功してしまう。
+	if c.OrgID != 0 && c.OrgID != orgID {
+		return fmt.Errorf("%w: chunks[%d] says %s, argument says %s",
+			errOrgMismatch, i, c.OrgID, orgID)
+	}
+
+	return nil
+}
+
+// validateExternalIDsAreDistinct は1回の Put に同じ external_id が2回無いことを見る。
+//
+// 🔴 黙って後勝ちにしない。理由は postgres 側の同名関数と同じである——upsert なので
+// DB は成功し、返す id の列は「入力と同じ順」を保ったまま同じ id を2回並べる。
+// n 件送って n 件受理されたのに行は n-1 件しか無い、という差がどこにも現れない。
+func validateExternalIDsAreDistinct(chunks []chunk.Chunk) error {
+	seen := make(map[int64]int, len(chunks))
+
+	for i, c := range chunks {
+		if c.ExternalID == nil {
+			continue
 		}
 
-		if c.Content == "" {
-			return fmt.Errorf("%w: chunks[%d]", errEmptyContent, i)
+		if first, dup := seen[*c.ExternalID]; dup {
+			return fmt.Errorf("%w: chunks[%d] and chunks[%d] both use %d",
+				errDuplicateExternalID, first, i, *c.ExternalID)
 		}
 
-		// ゼロ値は「Chunk 側が org を持っていない」を意味する。値が入っているのに
-		// 引数と違うときだけ拒否する。黙って引数で上書きすると、呼び出し側の
-		// 取り違えが別テナントへの書き込みとして成功してしまう。
-		if c.OrgID != 0 && c.OrgID != orgID {
-			return fmt.Errorf("%w: chunks[%d] says %s, argument says %s",
-				errOrgMismatch, i, c.OrgID, orgID)
-		}
+		seen[*c.ExternalID] = i
 	}
 
 	return nil
@@ -229,7 +290,7 @@ func (s *Store) insertWithinTx(ctx context.Context, tx *sql.Tx, w pendingWrite) 
 		err := tx.QueryRowContext(ctx, insertChunkSQL,
 			w.orgID.Int64(), c.DocumentID, c.SourceID, c.ChunkIndex, c.Content,
 			c.PageNumber, c.SectionLabel, s.embedderID, w.encoded[i].vector,
-			w.encoded[i].lexemeText, s.tokenizerID,
+			w.encoded[i].lexemeText, s.tokenizerID, c.ExternalID,
 		).Scan(&id)
 		if err != nil {
 			return nil, fmt.Errorf("%w: chunks[%d]: %s", errWrite, i, err.Error())
@@ -267,15 +328,38 @@ func (s *Store) Delete(ctx context.Context, orgID org.ID, chunkID int64) error {
 // 件数を返すのは、再取り込みが DeleteBySource → Put の2手順である以上、
 // 呼び出し側が「何を消したうえで入れ直したか」を記録できる必要があるため。
 func (s *Store) DeleteBySource(ctx context.Context, orgID org.ID, sourceID int64) (int, error) {
+	const stmt = `DELETE FROM chunks WHERE org_id = ? AND source_id = ?`
+
+	return s.deleteBy(ctx, orgID, stmt, sourceID)
+}
+
+// DeleteByDocument は文書の単位でまとめて削除し、消した件数を返す。
+//
+// 🔴 org_id を条件に含める理由は Delete と同じ。
+//
+// source 単位と別に持つのは、Corpus の削除経路が document 単位と source 単位の
+// 2つだからである (docs/adr/0020-phase2-corpus-integration-contract.md Decision 2)。
+// postgres 側と同じ契約であり、2つのストアが同じ形をしていることを配線点が
+// コンパイル時に確かめている (cmd/recall の backingStore)。
+func (s *Store) DeleteByDocument(ctx context.Context, orgID org.ID, documentID int64) (int, error) {
+	const stmt = `DELETE FROM chunks WHERE org_id = ? AND document_id = ?`
+
+	return s.deleteBy(ctx, orgID, stmt, documentID)
+}
+
+// deleteBy は「org と1つの id で絞って消し、件数を返す」を実行する。
+//
+// 🔴 stmt を呼び出し側から受けるが、org_id が WHERE の先頭に来ることは
+// どの呼び出し元でも変わらない。分離条件を文字列連結で組み立てないこと——
+// 組み立てにすると、org_id を落とした SQL を書けるようになる。
+func (s *Store) deleteBy(ctx context.Context, orgID org.ID, stmt string, id int64) (int, error) {
 	if err := validateOrgID(orgID); err != nil {
 		return 0, err
 	}
 
-	const stmt = `DELETE FROM chunks WHERE org_id = ? AND source_id = ?`
-
-	result, err := s.db.ExecContext(ctx, stmt, orgID.Int64(), sourceID)
+	result, err := s.db.ExecContext(ctx, stmt, orgID.Int64(), id)
 	if err != nil {
-		return 0, fmt.Errorf("%w: delete by source: %s", errWrite, err.Error())
+		return 0, fmt.Errorf("%w: bulk delete: %s", errWrite, err.Error())
 	}
 
 	affected, err := result.RowsAffected()

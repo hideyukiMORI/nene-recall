@@ -79,5 +79,11 @@ func ErrOrgMismatch() error { return errOrgMismatch }
 // ErrChunkIDNotAccepted は errChunkIDNotAccepted をテストへ公開する。
 func ErrChunkIDNotAccepted() error { return errChunkIDNotAccepted }
 
+// ErrExternalIDInvalid は errExternalIDInvalid をテストへ公開する。
+func ErrExternalIDInvalid() error { return errExternalIDInvalid }
+
+// ErrDuplicateExternalID は errDuplicateExternalID をテストへ公開する。
+func ErrDuplicateExternalID() error { return errDuplicateExternalID }
+
 // ErrSearch は errSearch をテストへ公開する。
 func ErrSearch() error { return errSearch }

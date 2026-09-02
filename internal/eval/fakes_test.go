@@ -99,6 +99,11 @@ func (f *fakeIndex) DeleteBySource(_ context.Context, _ org.ID, _ int64) (int, e
 	return 0, nil
 }
 
+// DeleteByDocument は index.Writer を満たすためだけにある。
+func (f *fakeIndex) DeleteByDocument(_ context.Context, _ org.ID, _ int64) (int, error) {
+	return 0, nil
+}
+
 // Search は ranking に書いた並びで返す。
 func (f *fakeIndex) Search(_ context.Context, q index.Query) ([]index.Result, error) {
 	f.searchCalls++
@@ -133,7 +138,7 @@ func (f *fakeIndex) results(q index.Query) []index.Result {
 
 	if f.foreignID != 0 {
 		out = append(out, result(chunk.Chunk{
-			ID: f.foreignID, OrgID: q.OrgID, DocumentID: 0, SourceID: 0,
+			ID: f.foreignID, OrgID: q.OrgID, ExternalID: nil, DocumentID: 0, SourceID: 0,
 			ChunkIndex: 0, Content: "混入", PageNumber: nil, SectionLabel: nil,
 		}, q.Alpha))
 	}

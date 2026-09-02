@@ -68,7 +68,7 @@ const candidateWhere = `WHERE org_id = ?
 // 計算量は減らない。減らないのにカットオフ由来の取りこぼし——片側の N 位圏外に
 // あるが合成では上位に来るはずの行が消える——という誤差源だけが増える。
 // postgres 側が全行に両方のスコアを計算しているのと同じ判断である。
-const selectCandidatesSQL = `SELECT id, document_id, source_id, chunk_index, content,
+const selectCandidatesSQL = `SELECT id, external_id, document_id, source_id, chunk_index, content,
        page_number, section_label, embedding
 FROM chunks
 ` + candidateWhere
@@ -92,7 +92,9 @@ WHERE chunks_fts MATCH ?
 // page_number と section_label は NULL を取りうるので、いったん Null 型で受けてから
 // ポインタに変換する。chunk.Chunk 側の *int / *string に直接 Scan はできない。
 type candidateRow struct {
-	id           int64
+	id int64
+	// externalID は外部システムの id。持たない行は NULL なので Null 型で受ける。
+	externalID   sql.NullInt64
 	documentID   int64
 	sourceID     int64
 	chunkIndex   int
@@ -361,7 +363,7 @@ func scanCandidates(rows *sql.Rows, vector []float32) ([]candidateRow, error) {
 			blob []byte
 		)
 
-		err := rows.Scan(&r.id, &r.documentID, &r.sourceID, &r.chunkIndex, &r.content,
+		err := rows.Scan(&r.id, &r.externalID, &r.documentID, &r.sourceID, &r.chunkIndex, &r.content,
 			&r.pageNumber, &r.sectionLabel, &blob)
 		if err != nil {
 			return nil, fmt.Errorf("%w: scan: %s", errSearch, err.Error())
@@ -500,7 +502,10 @@ func toResults(scored []scoredCandidate, q index.Query) []index.Result {
 				// WHERE org_id = ? で絞った以上、列の値は必ずこれと等しい。
 				// 読み戻すと int64 から org.ID への変換が要るが、それは CNF-001 が
 				// 禁じている直接変換であり、経路を増やすほど分離は緩む。
-				OrgID:        q.OrgID,
+				OrgID: q.OrgID,
+				// 🔴 外部 id は列から読み戻す。org と違って「問い合わせた値」が
+				// 存在しないので、返せるのは保存されている値だけである。
+				ExternalID:   nullableInt64(s.row.externalID),
 				DocumentID:   s.row.documentID,
 				SourceID:     s.row.sourceID,
 				ChunkIndex:   s.row.chunkIndex,
@@ -526,6 +531,15 @@ func nullableInt(v sql.NullInt64) *int {
 	n := int(v.Int64)
 
 	return &n
+}
+
+// nullableInt64 は NULL を nil に写す。
+func nullableInt64(v sql.NullInt64) *int64 {
+	if !v.Valid {
+		return nil
+	}
+
+	return &v.Int64
 }
 
 // nullableString は NULL を nil に写す。

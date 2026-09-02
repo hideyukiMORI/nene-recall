@@ -27,7 +27,10 @@ type chunkSpec struct {
 // テストが誤って id 付きのチャンクを作らないよう、ここで固定する。
 func newChunk(spec chunkSpec) chunk.Chunk {
 	return chunk.Chunk{
-		ID:           0,
+		ID: 0,
+		// 外部 id も既定ではゼロ値（nil）にする。持たせたいテストは
+		// external_id_test.go の externalChunk を通す。
+		ExternalID:   nil,
 		OrgID:        spec.orgID,
 		DocumentID:   spec.documentID,
 		SourceID:     spec.sourceID,

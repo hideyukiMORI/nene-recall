@@ -97,7 +97,7 @@ const tsRankNormalization = 0
 // 単体でしか順序を作れない）。🔴 その判断は Phase 1 項目7 の ADR の仕事であって、
 // ここで先取りしない。先取りすると、測っていない前提で索引の設計を決めることになる。
 const candidatesCTE = `WITH candidates AS (
-  SELECT id, document_id, source_id, chunk_index, content,
+  SELECT id, external_id, document_id, source_id, chunk_index, content,
          page_number, section_label,
          -(embedding <#> $2::vector) AS vector_score,
          ts_rank(lexemes, to_tsquery('simple', $6), $7) AS lexical_score
@@ -125,7 +125,7 @@ const candidatesCTE = `WITH candidates AS (
 //
 // ⚠️ 返す lexical_score は正規化前の生の値である（下の scannedRow の説明を参照）。
 const searchWeightedSumSQL = candidatesCTE + `
-SELECT id, document_id, source_id, chunk_index, content,
+SELECT id, external_id, document_id, source_id, chunk_index, content,
        page_number, section_label,
        vector_score, lexical_score,
        $8::real * vector_score
@@ -157,13 +157,13 @@ LIMIT $5`
 // float8 に明示的に寄せているのは、1.0 / bigint が numeric になるのを避ける
 // ため。numeric はドライバの走査先が float64 と噛み合わない。
 const searchRRFSQL = candidatesCTE + `, ranked AS (
-  SELECT id, document_id, source_id, chunk_index, content,
+  SELECT id, external_id, document_id, source_id, chunk_index, content,
          page_number, section_label, vector_score, lexical_score,
          RANK() OVER (ORDER BY vector_score  DESC) AS vector_rank,
          RANK() OVER (ORDER BY lexical_score DESC) AS lexical_rank
   FROM candidates
 )
-SELECT id, document_id, source_id, chunk_index, content,
+SELECT id, external_id, document_id, source_id, chunk_index, content,
        page_number, section_label,
        vector_score, lexical_score,
        1.0::float8 / ($8::int + vector_rank)::float8
@@ -182,7 +182,9 @@ LIMIT $5`
 // page_number と section_label は NULL を取りうるので、いったん Null 型で受けてから
 // ポインタに変換する。chunk.Chunk 側の *int / *string に直接 Scan はできない。
 type scannedRow struct {
-	id           int64
+	id int64
+	// externalID は外部システムの id。持たない行は NULL なので Null 型で受ける。
+	externalID   sql.NullInt64
 	documentID   int64
 	sourceID     int64
 	chunkIndex   int
@@ -384,7 +386,7 @@ func collectResults(rows *sql.Rows, q index.Query) ([]index.Result, error) {
 	for rows.Next() {
 		var r scannedRow
 
-		err := rows.Scan(&r.id, &r.documentID, &r.sourceID, &r.chunkIndex, &r.content,
+		err := rows.Scan(&r.id, &r.externalID, &r.documentID, &r.sourceID, &r.chunkIndex, &r.content,
 			&r.pageNumber, &r.sectionLabel, &r.vectorScore, &r.lexicalScore, &r.score)
 		if err != nil {
 			return nil, fmt.Errorf("%w: scan: %s", errSearch, err.Error())
@@ -434,7 +436,10 @@ func (r scannedRow) toResult(q index.Query) index.Result {
 			// WHERE org_id = $1 で絞った以上、列の値は必ずこれと等しい。
 			// 読み戻すと int64 から org.ID への変換が要るが、それは CNF-001 が
 			// 禁じている直接変換であり、経路を増やすほど分離は緩む。
-			OrgID:        q.OrgID,
+			OrgID: q.OrgID,
+			// 🔴 外部 id は列から読み戻す。org と違って「問い合わせた値」が
+			// 存在しないので、返せるのは保存されている値だけである。
+			ExternalID:   nullableInt64(r.externalID),
 			DocumentID:   r.documentID,
 			SourceID:     r.sourceID,
 			ChunkIndex:   r.chunkIndex,
@@ -460,6 +465,15 @@ func nullableInt(v sql.NullInt32) *int {
 	n := int(v.Int32)
 
 	return &n
+}
+
+// nullableInt64 は NULL を nil に写す。
+func nullableInt64(v sql.NullInt64) *int64 {
+	if !v.Valid {
+		return nil
+	}
+
+	return &v.Int64
 }
 
 // nullableString は NULL を nil に写す。
