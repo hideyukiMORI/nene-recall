@@ -311,6 +311,7 @@ func jsonTestMeasurement() eval.Measurement {
 func testReportRanking() eval.RankingSettings {
 	return eval.RankingSettings{
 		Fusion: "weighted-sum", Store: "postgres", LexicalScorer: "ts_rank",
+		TokenizerID:         "bigram:nfkc-lower:v1",
 		TsRankNormalization: intPtr(0), RRFK: intPtr(60),
 	}
 }
@@ -319,6 +320,7 @@ func testReportRanking() eval.RankingSettings {
 func testSQLiteRanking() eval.RankingSettings {
 	return eval.RankingSettings{
 		Fusion: "weighted-sum", Store: "sqlite", LexicalScorer: "fts5-bm25",
+		TokenizerID:         "bigram:nfkc-lower:v1",
 		TsRankNormalization: nil, RRFK: nil,
 	}
 }

@@ -39,7 +39,9 @@ import (
 	"github.com/hideyukiMORI/nene-recall/internal/embed/ollama"
 	"github.com/hideyukiMORI/nene-recall/internal/eval"
 	"github.com/hideyukiMORI/nene-recall/internal/index"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical"
 	"github.com/hideyukiMORI/nene-recall/internal/lexical/bigram"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical/kagome"
 	"github.com/hideyukiMORI/nene-recall/internal/org"
 	"github.com/hideyukiMORI/nene-recall/internal/store/postgres"
 	"github.com/hideyukiMORI/nene-recall/internal/store/sqlite"
@@ -110,6 +112,11 @@ var (
 	// 🔴 未知の指定を既定へ黙って倒さない。綴り誤りが「postgres で測った」結果
 	// として記録され、後から条件を取り違える。postgres.ParseFusion と同じ理由。
 	errUnknownStore = errors.New("eval: unknown store")
+	// errUnknownTokenizer は -tokenizer に未知の名前が渡されたことを表す。
+	//
+	// 🔴 errUnknownStore と同じ理由で既定へ倒さない。綴り誤りが「bigram で
+	// 測った」結果として記録されると、ADR 0018 の比較そのものが無意味になる。
+	errUnknownTokenizer = errors.New("eval: unknown tokenizer")
 )
 
 // storeNames は -store に指定できる名前。
@@ -119,6 +126,15 @@ var (
 const (
 	storeNamePostgres = string(config.StorePostgres)
 	storeNameSQLite   = string(config.StoreSQLite)
+)
+
+// tokenizerNames は -tokenizer に指定できる名前。
+//
+// 🔴 config.Tokenizer の値と同じ綴りである。評価だけ別の名前を持つと、
+// レポートと .env の RECALL_TOKENIZER が対応しない。
+const (
+	tokenizerNameBigram = string(config.TokenizerBigram)
+	tokenizerNameKagome = string(config.TokenizerKagome)
 )
 
 // alphaNotePostgres / alphaNoteSQLite は alpha の読み方をレポート自身に
@@ -146,6 +162,15 @@ const (
 		"inside it but was not selected for this backend " +
 		"(docs/benchmarks/2026-09-02-eval-store-comparison.md). " +
 		"Re-measure if any of those conditions change."
+	// alphaNoteOtherTokenizer は分割器が bigram でないときに足す但し書き。
+	//
+	// 🔴 ADR 0015 が 0.8 を選んだ掃引は bigram で行われた。分割器を変えると
+	// 語彙スコアの分布が変わるので、同じ 0.8 が同じ意味を持つ保証は無い
+	// (ADR 0015 Decision 3)。**測っていないことをレポートに書かない**、を
+	// ストア別の但し書きと同じ形で分割器にも適用する。
+	alphaNoteOtherTokenizer = " This run did not use the bigram tokenizer: " +
+		"the 0.8 default was swept on bigram only, and alpha has not been " +
+		"swept for this tokenizer (ADR 0015 Decision 3, ADR 0018)."
 )
 
 func main() {
@@ -185,7 +210,13 @@ type flags struct {
 	store string
 	// sqlitePath は -store sqlite のときに作り直すファイル。
 	sqlitePath string
-	gpuNote    string
+	// tokenizer はどの分割器で測るか。
+	//
+	// 🔴 生の文字列で持つ。config.Tokenizer にすると「検証していない値が
+	// config.Tokenizer を名乗る」経路が1つ増える。rawOrg・fusion・store と
+	// 同じ扱いである。
+	tokenizer string
+	gpuNote   string
 }
 
 // session は1回の実行の入力一式。引数を4つ以下に保つための入れ物 (GO-011)。
@@ -285,6 +316,9 @@ func parseFlags() (flags, error) {
 			"（既定は postgres。sqlite は比較実測用・ADR 0017）")
 	flag.StringVar(&opts.sqlitePath, "sqlite-path", defaultSQLitePath,
 		"-store sqlite のときに作り直すファイル")
+	flag.StringVar(&opts.tokenizer, "tokenizer", tokenizerNameBigram,
+		"語彙分割器: "+tokenizerNameBigram+" | "+tokenizerNameKagome+
+			"（既定は bigram。kagome は比較実測用・ADR 0018）")
 	flag.StringVar(&opts.gpuNote, "gpu-note", "",
 		"GPU の占有状況などの自己申告。レポートにそのまま載る")
 	flag.Parse()
@@ -387,6 +421,31 @@ func (s session) openEvalStore(ctx context.Context, embedder embed.Embedder) (ev
 		errFlags, errUnknownStore, s.opts.store, storeNamePostgres, storeNameSQLite)
 }
 
+// buildTokenizer は -tokenizer から語彙分割器を組み立てる。
+//
+// 🔴 未知の名前を既定へ黙って倒さない。倒すと「kagome で測った」と記録された
+// レポートが bigram の数字を持つことになり、ADR 0018 が比較したいものを
+// 比較できなくなる。postgres.ParseFusion・openEvalStore と同じ判断である。
+//
+// ⚠️ kagome.New だけが error を返す（辞書の読み込みを含むため）。契約
+// (lexical.Tokenizer) の違いではない。
+func buildTokenizer(name string) (lexical.Tokenizer, error) {
+	switch name {
+	case tokenizerNameBigram:
+		return bigram.New(), nil
+	case tokenizerNameKagome:
+		morphological, err := kagome.New()
+		if err != nil {
+			return nil, fmt.Errorf("build kagome tokenizer: %w", err)
+		}
+
+		return morphological, nil
+	}
+
+	return nil, fmt.Errorf("%w: %w: %q (want %q or %q)",
+		errFlags, errUnknownTokenizer, name, tokenizerNameBigram, tokenizerNameKagome)
+}
+
 // openPostgresStore は評価専用 DB を作り直して繋ぐ。
 func (s session) openPostgresStore(
 	ctx context.Context, embedder embed.Embedder,
@@ -398,6 +457,11 @@ func (s session) openPostgresStore(
 		return evalStore{}, fmt.Errorf("%w: %w", errFlags, err)
 	}
 
+	tokenizer, err := buildTokenizer(s.opts.tokenizer)
+	if err != nil {
+		return evalStore{}, err
+	}
+
 	if err := recreateEvalDatabase(ctx); err != nil {
 		return evalStore{}, err
 	}
@@ -407,7 +471,7 @@ func (s session) openPostgresStore(
 		return evalStore{}, fmt.Errorf("open evaluation database: %w", err)
 	}
 
-	store, err := postgres.New(db, embedder, bigram.New(), fusion)
+	store, err := postgres.New(db, embedder, tokenizer, fusion)
 	if err != nil {
 		return evalStore{}, errors.Join(fmt.Errorf("build store: %w", err), db.Close())
 	}
@@ -429,6 +493,7 @@ func (s session) openPostgresStore(
 		Fusion:              settings.Fusion,
 		Store:               settings.Store,
 		LexicalScorer:       settings.LexicalScorer,
+		TokenizerID:         settings.TokenizerID,
 		TsRankNormalization: &tsRank,
 		RRFK:                &rrfK,
 	}}, nil
@@ -448,6 +513,11 @@ func (s session) openSQLiteStore(
 			errFlags, storeNameSQLite, s.opts.fusion, postgres.FusionWeightedSum.String())
 	}
 
+	tokenizer, err := buildTokenizer(s.opts.tokenizer)
+	if err != nil {
+		return evalStore{}, err
+	}
+
 	if err := recreateEvalFile(s.opts.sqlitePath); err != nil {
 		return evalStore{}, err
 	}
@@ -457,7 +527,7 @@ func (s session) openSQLiteStore(
 		return evalStore{}, fmt.Errorf("open evaluation database: %w", err)
 	}
 
-	store, err := sqlite.New(db, embedder, bigram.New())
+	store, err := sqlite.New(db, embedder, tokenizer)
 	if err != nil {
 		return evalStore{}, errors.Join(fmt.Errorf("build store: %w", err), db.Close())
 	}
@@ -472,6 +542,7 @@ func (s session) openSQLiteStore(
 		Fusion:        settings.Fusion,
 		Store:         settings.Store,
 		LexicalScorer: settings.LexicalScorer,
+		TokenizerID:   settings.TokenizerID,
 		// 🔴 postgres 専用の2項目は nil にする。JSON からはキーごと消え、
 		// レポートは「この採点関数にそのつまみが無い」と読める。0 を入れると
 		// 「フラグ 0 で測った」と読まれ、SQLite に無い ts_rank の条件が
@@ -599,7 +670,7 @@ func (s session) measureOptions(target evalStore) (eval.Options, error) {
 	return eval.Options{
 		OrgID:     orgID,
 		Alpha:     alpha,
-		AlphaNote: note,
+		AlphaNote: note + tokenizerNote(target.ranking.TokenizerID),
 		Limit:     s.opts.limit,
 		Rounds:    s.opts.rounds,
 		Ranking:   target.ranking,
@@ -621,6 +692,22 @@ func alphaNote(store string) (string, error) {
 
 	return "", fmt.Errorf("%w: %w: %q (want %q or %q)",
 		errFlags, errUnknownStore, store, storeNamePostgres, storeNameSQLite)
+}
+
+// tokenizerNote は分割器が bigram でないときの但し書きを返す。
+//
+// 🔴 判定はフラグの値ではなく、ストアが実際に使った Tokenizer.ID() で行う。
+// conditions.ranking を「指定したつもりの条件」ではなく「実際に使われた条件」に
+// 揃えているのと同じ理由である（様式 v4）。
+//
+// 🔑 bigram の識別子を実物から引くのは、リテラルで書くと分割規則の版を上げた
+// ときに（"bigram:nfkc-lower:v2"）静かに但し書きが付き始めるからである。
+func tokenizerNote(tokenizerID string) string {
+	if tokenizerID == bigram.New().ID() {
+		return ""
+	}
+
+	return alphaNoteOtherTokenizer
 }
 
 // alpha は -alpha が未指定なら設定の既定値を使う。
@@ -864,6 +951,9 @@ func (s session) logSummary(report eval.Report) {
 		// 端末の出力だけでどちらの数字か分からないと取り違える (ADR 0017)。
 		slog.String("store", report.Conditions.Ranking.Store),
 		slog.String("lexical_scorer", report.Conditions.Ranking.LexicalScorer),
+		// 🔴 分割器も出す。bigram と kagome を続けて測るときに、端末の出力だけで
+		// どちらの数字か分からないと取り違える (ADR 0018)。
+		slog.String("tokenizer_id", report.Conditions.Ranking.TokenizerID),
 		// micro は正解チャンク単位の内訳。クエリ単位のマクロ平均とは別物で、
 		// 「どのチャンクが拾えていないか」を見るにはこちらが要る。
 		slog.Float64("micro_recall", summary.MicroRecall.Value),

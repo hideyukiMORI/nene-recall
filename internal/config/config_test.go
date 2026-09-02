@@ -17,6 +17,7 @@ func setMinimalEnv(t *testing.T) {
 	t.Setenv("RECALL_STORE", "")
 	t.Setenv("RECALL_DATABASE_URL", "postgres://localhost/recall")
 	t.Setenv("RECALL_DB_PATH", "")
+	t.Setenv("RECALL_TOKENIZER", "")
 	t.Setenv("RECALL_EMBEDDER", "")
 	t.Setenv("RECALL_EMBED_MODEL", "")
 	t.Setenv("RECALL_EMBED_DIMENSIONS", "")
@@ -43,6 +44,12 @@ func TestLoadAppliesDocumentedDefaults(t *testing.T) {
 
 	if got, want := cfg.Store, config.StorePostgres; got != want {
 		t.Errorf("Store = %q, want %q", got, want)
+	}
+
+	// 🔴 既定が bigram であること。kagome は比較対象であって既定ではなく、
+	// 既定を移すのは実測を見て別の ADR を書いてからである (ADR 0018)。
+	if got, want := cfg.Tokenizer, config.TokenizerBigram; got != want {
+		t.Errorf("Tokenizer = %q, want %q（既定が比較対象に移っていないか）", got, want)
 	}
 
 	if got, want := cfg.EmbedProvider, config.EmbedProviderOllama; got != want {
@@ -78,6 +85,7 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		"alpha が負":      {"RECALL_DEFAULT_ALPHA", "-0.1", config.ErrInvalidValue},
 		"alpha が非数値":    {"RECALL_DEFAULT_ALPHA", "high", config.ErrInvalidValue},
 		"未知の store":     {"RECALL_STORE", "qdrant", config.ErrUnknownOption},
+		"未知の tokenizer": {"RECALL_TOKENIZER", "mecab", config.ErrUnknownOption},
 		"未知の embedder":  {"RECALL_EMBEDDER", "openai", config.ErrUnknownOption},
 		"voyage でキーが無い": {"RECALL_EMBEDDER", "voyage", config.ErrMissingRequired},
 	}
@@ -118,6 +126,7 @@ func baseConfig() config.Config {
 		Store:           config.StorePostgres,
 		DatabaseURL:     "postgres://localhost/recall",
 		DBPath:          "recall.db",
+		Tokenizer:       config.TokenizerBigram,
 		EmbedProvider:   config.EmbedProviderOllama,
 		EmbedModel:      "bge-m3",
 		EmbedDimensions: 1024,
@@ -144,7 +153,12 @@ func TestValidateRejectsBadCombinations(t *testing.T) {
 			func(c *config.Config) { c.Store = config.StoreSQLite; c.DBPath = "" },
 			config.ErrMissingRequired,
 		},
-		"未知の Store":    {func(c *config.Config) { c.Store = "qdrant" }, config.ErrUnknownOption},
+		"未知の Store":  {func(c *config.Config) { c.Store = "qdrant" }, config.ErrUnknownOption},
+		"kagome に切替": {func(c *config.Config) { c.Tokenizer = config.TokenizerKagome }, nil},
+		"未知の Tokenizer": {
+			func(c *config.Config) { c.Tokenizer = "mecab" },
+			config.ErrUnknownOption,
+		},
 		"未知の Embedder": {func(c *config.Config) { c.EmbedProvider = "openai" }, config.ErrUnknownOption},
 		"voyage だがキーが無い": {
 			func(c *config.Config) { c.EmbedProvider = config.EmbedProviderVoyage },
@@ -182,5 +196,24 @@ func TestEmbedderIDDoesNotLeakAPIKey(t *testing.T) {
 
 	if got, want := cfg.EmbedderID(), "bge-m3:1024"; got != want {
 		t.Fatalf("EmbedderID() = %q, want %q", got, want)
+	}
+}
+
+// TestLoadReadsTheTokenizer は RECALL_TOKENIZER が読まれることを確認する。
+//
+// 🔴 既定が bigram であること自体は TestLoadAppliesDocumentedDefaults が見る。
+// ここで見るのは「選べること」で、選べなければ ADR 0018 の比較実測そのものが
+// できない。
+func TestLoadReadsTheTokenizer(t *testing.T) {
+	setMinimalEnv(t)
+	t.Setenv("RECALL_TOKENIZER", "kagome")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() が失敗した: %v", err)
+	}
+
+	if got, want := cfg.Tokenizer, config.TokenizerKagome; got != want {
+		t.Errorf("Tokenizer = %q, want %q", got, want)
 	}
 }

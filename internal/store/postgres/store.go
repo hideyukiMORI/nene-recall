@@ -132,6 +132,7 @@ func (s *Store) RankingSettings() RankingSettings {
 		Fusion:              s.fusion.String(),
 		Store:               storeName,
 		LexicalScorer:       lexicalScorerName,
+		TokenizerID:         s.tokenizerID,
 		TsRankNormalization: tsRankNormalization,
 		RRFK:                RRFK,
 	}

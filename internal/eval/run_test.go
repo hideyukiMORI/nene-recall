@@ -54,6 +54,7 @@ func defaultOptions(t *testing.T, rounds int) eval.Options {
 func testRanking() eval.RankingSettings {
 	return eval.RankingSettings{
 		Fusion: "weighted-sum", Store: "postgres", LexicalScorer: "ts_rank",
+		TokenizerID:         "bigram:nfkc-lower:v1",
 		TsRankNormalization: intPtr(0), RRFK: intPtr(60),
 	}
 }
@@ -358,8 +359,18 @@ func TestMeasureRejectsInvalidOptions(t *testing.T) {
 		"融合方式の記録が空": {
 			OrgID: valid.OrgID, Alpha: 1, AlphaNote: note, Limit: 10, Rounds: 1,
 			Ranking: eval.RankingSettings{
-				Fusion: "", Store: "", LexicalScorer: "",
+				Fusion: "", Store: "", LexicalScorer: "", TokenizerID: "",
 				TsRankNormalization: nil, RRFK: nil,
+			},
+		},
+		// 🔴 分割器の記録が無いレポートは、bigram と形態素のどちらで測ったかを
+		// 後から特定できない (ADR 0018)。融合方式と同じく空を拒む。
+		"分割器の記録が空": {
+			OrgID: valid.OrgID, Alpha: 1, AlphaNote: note, Limit: 10, Rounds: 1,
+			Ranking: eval.RankingSettings{
+				Fusion: "weighted-sum", Store: "postgres", LexicalScorer: "ts_rank",
+				TokenizerID:         "",
+				TsRankNormalization: intPtr(0), RRFK: intPtr(60),
 			},
 		},
 		// 🔴 但し書きが無い alpha は「調整済みの値」として読まれる

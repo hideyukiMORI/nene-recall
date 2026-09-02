@@ -46,7 +46,13 @@ import (
 // sqlite のレポートにも ts_rank_normalization: 0 と postgres 向けの alpha_note が
 // 入っており、SQLite に ts_rank は無いのに「フラグ 0 で測った」と読めた。
 // 条件表が実際の条件と違うレポートは、正本になれない (ADR 0013)。
-const ReportSchema = "nene-recall/eval-report/v4"
+// v5 (2026-09-02) で変えたところ（形態素分割器・ADR 0018）:
+//   - conditions.ranking に tokenizer_id を足した
+//
+// 🔴 項目を1つ足しただけでも版を上げる。上げないと「tokenizer_id の無い
+// レポート」が2つの意味を持つ——様式が古いのか、その実行で分割器を記録し
+// なかったのか、読む側から区別できない。v2 と v3 も純粋な追加で上げている。
+const ReportSchema = "nene-recall/eval-report/v5"
 
 // Report は1回の計測の全記録。JSON でそのまま docs/benchmarks/data/ に残す。
 //
@@ -209,6 +215,13 @@ type RankingSettings struct {
 	// 🔴 2つのストアの recall の差には「ストアの差」と「採点関数の差」が
 	// 混ざる。分けて読むための印であり、Store とは別に要る。
 	LexicalScorer string `json:"lexical_scorer"`
+	// TokenizerID は取り込みと検索に使った分割器の識別子。
+	//
+	// 🔴 例 "bigram:nfkc-lower:v1" / "kagome:ipadic:ascii-words:v1"。
+	// 分割器は語彙スコアの入力そのものを変えるので、これが無いレポートは
+	// 条件を特定できない (ADR 0018 Decision 3)。alpha の最適値も分割器に
+	// 条件付きである (ADR 0015 Decision 3)。
+	TokenizerID string `json:"tokenizer_id"`
 	// TsRankNormalization は ts_rank に渡した正規化フラグ。postgres 専用。
 	//
 	// 🔴 ポインタなのは「無い」と「0」を区別するためである。postgres の

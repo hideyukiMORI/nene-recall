@@ -33,6 +33,23 @@ const (
 	StoreSQLite Store = "sqlite"
 )
 
+// Tokenizer は語彙検索のテキスト分割器の種類。
+//
+// 🔴 既定は bigram のままにする。kagome は**比較対象**として入っており
+// (ADR 0018)、既定を移すのは実測を見て別の ADR を書いてからである。
+//
+// 🔴 分割器を変えると保存済みの lexeme_text と噛み合わない。ストアが
+// tokenizer_id の不一致をエラーにするので静かには壊れないが、切り替えたら
+// 取り込み直しが要る（ADR 0005 と同じ性質）。
+type Tokenizer string
+
+const (
+	// TokenizerBigram は文字 bigram。既定 (ADR 0014)。
+	TokenizerBigram Tokenizer = "bigram"
+	// TokenizerKagome は形態素解析 (kagome + IPA 辞書)。比較実測用 (ADR 0018)。
+	TokenizerKagome Tokenizer = "kagome"
+)
+
 // EmbedProvider は埋め込みプロバイダの種類。
 //
 // string のままにしないのは、選択肢が閉じていることを型で示し、switch の網羅を
@@ -60,6 +77,12 @@ type Config struct {
 	DatabaseURL string
 	// DBPath は Store=sqlite のときのファイルパス。RECALL_DB_PATH、既定 "recall.db"。
 	DBPath string
+
+	// Tokenizer は語彙検索の分割器。RECALL_TOKENIZER、既定 "bigram"。
+	//
+	// kagome があるのは、bigram と形態素のどちらが良いか（要件定義 Q-2）を
+	// 同一データで比較実測するため。比較そのものが成果物になる (ADR 0018)。
+	Tokenizer Tokenizer
 
 	// EmbedProvider は埋め込みプロバイダ。RECALL_EMBEDDER、既定 "ollama"。
 	//
@@ -108,6 +131,7 @@ func Load() (Config, error) {
 		Store:           Store(env("RECALL_STORE", string(StorePostgres))),
 		DatabaseURL:     os.Getenv("RECALL_DATABASE_URL"),
 		DBPath:          env("RECALL_DB_PATH", "recall.db"),
+		Tokenizer:       Tokenizer(env("RECALL_TOKENIZER", string(TokenizerBigram))),
 		EmbedProvider:   EmbedProvider(env("RECALL_EMBEDDER", string(EmbedProviderOllama))),
 		EmbedModel:      env("RECALL_EMBED_MODEL", "bge-m3"),
 		EmbedDimensions: 1024,
@@ -143,7 +167,26 @@ func (c Config) validate() error {
 		return err
 	}
 
+	if err := c.validateTokenizer(); err != nil {
+		return err
+	}
+
 	return c.validateEmbedder()
+}
+
+// validateTokenizer は分割器の選択を検証する。
+//
+// 🔴 未知の値を既定へ黙って倒さない。綴り誤りが bigram として起動すると、
+// 「kagome で測ったつもりの数字」が bigram のものになる。設定の誤りは
+// 設定を読んだ直後に落とす。
+func (c Config) validateTokenizer() error {
+	switch c.Tokenizer {
+	case TokenizerBigram, TokenizerKagome:
+		return nil
+	default:
+		return fmt.Errorf("%w: RECALL_TOKENIZER must be %q or %q, got %q",
+			ErrUnknownOption, TokenizerBigram, TokenizerKagome, c.Tokenizer)
+	}
 }
 
 // validateStore は永続化バックエンドの選択と、その選択が要求する値の有無を検証する。
