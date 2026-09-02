@@ -62,8 +62,11 @@ ADR 0014（Q-1/Q-2）と ADR 0015（Q-3）、数字の正本は
 
 **比較用の SQLite ストア（2026-09-02）**: `RECALL_STORE=sqlite` で同じ API が動く（ADR 0017。
 純 Go・ベクトルは Go 側総当たり・語彙は FTS5 `bm25()`）。`make eval EVAL_STORE=sqlite` で同一評価セットを
-測れる。⚠️ **Postgres との比較の実測はまだ正本が無い**（rounds=1 の smoke で `recall@10` 0.722・
-p95 埋め込み除く 203ms と、Postgres の 15ms に対し大きく遅い兆候。正本は比較レーンで取る）。
+測れる。**比較の正本**（2026-09-02・rounds=5）は
+[`docs/benchmarks/2026-09-02-eval-store-comparison.md`](docs/benchmarks/2026-09-02-eval-store-comparison.md):
+純ベクトルの品質は両ストアで**完全一致**（58クエリ全件で順位が同一）、latency は SQLite が **10〜15 倍遅い**
+（埋め込みを除く p95 13.5 → 207.7ms）。`ts_rank` と `bm25()` の差はゆらぎの帯の中（ADR 0014 追記）。
+SQLite の `alpha` プラトーは 0.8〜0.9 で、既定 0.8 はストア共通のまま（ADR 0017 追記）。
 
 **CLI `recallctl`（2026-09-02）**: HTTP API の薄いクライアント（ADR 0016）。`make build` が `bin/recallctl` を作る。
 🔴 **`org_id` の既定値 `1` を持つのはこの CLI の定数1箇所だけ**で、サーバ側には無い。使い方は `cmd/recallctl/README.md`。
@@ -77,6 +80,12 @@ p95 埋め込み除く 203ms と、Postgres の 15ms に対し大きく遅い兆
 **ベクトル検索のみの基準線（2026-09-02 実測）**: `recall@10` **0.596** / `MRR` 0.705 /
 `p95` 埋め込み込み 64.9ms・除く 3.3ms。正本は
 [`docs/benchmarks/2026-09-02-eval-vector-only-baseline.md`](docs/benchmarks/2026-09-02-eval-vector-only-baseline.md)。
+
+**ハイブリッド既定構成の latency 正本（2026-09-02・rounds=5）**: `p95` 埋め込み込み **74.6ms**・除く **14.4ms**
+（[`docs/benchmarks/2026-09-02-eval-hybrid-latency.md`](docs/benchmarks/2026-09-02-eval-hybrid-latency.md)）。
+🔑 埋め込みを除く p95 が 3.3 → 14.4ms に増えたのは**コード起因**（語彙導入前のリビジョンで統制測定済み）。
+`ts_rank` を `@@` で絞らず全行に計算しているためで、**`alpha` は latency に効かない**（`alpha=1.0` でも語彙を計算する）。
+⇒ 項目 7 で測る索引は HNSW だけではなく `GIN (lexemes)` も対象。要件 §8 の予算 200ms（1万チャンク）に対しては 7% の位置。
 
 🔑 **基準線は事前の予想と逆だった。** `paraphrase` 0.44 が最下位、`negation` 0.72 が最上位。
 「ベクトルは言い換えに強く固有名詞に弱い」という通説はこのコーパスでは成り立っていない。
@@ -112,11 +121,14 @@ Q-4（reranker）を「Phase 1 は入れない」と決めた判断は、**こ�
    p95（**埋め込み往復を含む／除く の両方**）を測り、`docs/benchmarks/data/` に
    JSON レポートを書く。評価セットは `testdata/eval/` の**実データ**
    （259チャンク・58クエリ・正解 延べ236件）
-7. **実測と HNSW** — ベンチを取り `docs/benchmarks/` に記録してから索引を入れる。before/after を残す
+7. **実測と HNSW** — ベンチを取り `docs/benchmarks/` に記録してから索引を入れる。before/after を残す。
+   ⚠️ 対象は HNSW（`embedding`）だけでなく **`GIN (lexemes)`** も（語彙の全行 `ts_rank` が系統2 p95 を 3.3 → 14.4ms にした）。
+   🔴 **10万件のデータ源は施主判断待ち**（評価セットは 259 チャンク。合成か実文書かで結果の意味が変わる）
 8. ~~**SQLite ストア**~~ — ✅ 完了（ADR 0017）。`internal/store/sqlite`。純 Go の `modernc.org/sqlite`・
    ベクトルは `BLOB` を Go 側で総当たり・語彙は FTS5（`tokenize='ascii'`）の `bm25()`・合成は加重和のみ。
    `id` は `AUTOINCREMENT`（再利用させない。ADR 0013 の写像が壊れる）。🔴 `org_id` の絞り込みは
-   `candidateWhere` の**1箇所だけ**。**同一データでの比較の実測が残っている**（成果物はそちら）
+   `candidateWhere` の**1箇所だけ**。同一データでの比較は ✅ 完了（上の「比較の正本」。ADR 0017 追記）。
+   **比較用のまま**——259 チャンクで既に埋め込みを除く p95 が約 200ms で、§8 の予算を規模 1/40 の段階で使い切る
 9. ~~**CLI**~~ — ✅ 完了（ADR 0016）。`cmd/recallctl`。HTTP API だけを叩く（ストアにも Ollama にも触らない）。
    `org_id` は `-org` → `RECALL_ORG_ID` → 定数 `1` の順で決まり、どこから取ったかを毎回 stderr に出す。
    分割器（文書→チャンク）は**まだ持たない**（Decision 4。句点1文字で類似度が 0.016 動くので当て推量で入れない）
