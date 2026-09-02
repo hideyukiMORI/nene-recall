@@ -131,6 +131,20 @@ var errOrgMismatch = errors.New("postgres: chunk org_id does not match the reque
 // Corpus 由来の chunk_id の受け入れ方式は Phase 2 の ADR で決める（施主決定）。
 var errChunkIDNotAccepted = errors.New("postgres: explicit chunk id is not accepted in phase 1")
 
+// errExternalIDInvalid は external_id に 0 以下が渡されたことを表す。
+//
+// 🔴 「外部 id を持たない」は NULL（Go 側は nil）で表す。0 を通すと、置き換えの
+// 鍵が実在しない 0 番になり、外部 id を持たないはずの行どうしが互いを上書きする。
+var errExternalIDInvalid = errors.New("postgres: external id must be a positive integer")
+
+// errDuplicateExternalID は1回の Put に同じ external_id が2回現れたことを表す。
+//
+// 🔴 黙って後勝ちにしない。upsert なので DB は成功し、返す id の列も「入力と
+// 同じ順」を保ったまま同じ id を2回並べる。n 件送って n 件受理されたのに行は
+// n-1 件しか無い、という差がどこにも現れない状態になる
+// (docs/adr/0020-phase2-corpus-integration-contract.md Decision 1・ADR 0013)。
+var errDuplicateExternalID = errors.New("postgres: the same external id appears twice in one batch")
+
 // ---------------------------------------------------------------------------
 // 検索
 // ---------------------------------------------------------------------------

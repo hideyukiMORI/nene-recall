@@ -79,14 +79,26 @@ func New(cfg config.Config, log *slog.Logger, deps Dependencies) (*Server, error
 }
 
 // Routes は http.Handler を返す。
+//
+// 🔴 /v1/* を1つの ServeMux にまとめてから requireToken で包む。ハンドラごとに
+// 包む形にすると、新しいエンドポイントを足した人が包み忘れられる——そして
+// 忘れても何も落ちない。認証されない口が1つ増えるだけである。
+// まとめて包めば、/v1/ の下に足したものは自動的に同じ扱いになる。
+//
+// /healthz と /readyz は外側の mux に直接置く。監視の口は認証を要求しない
+// (docs/adr/0020-phase2-corpus-integration-contract.md Decision 3)。
 func (s *Server) Routes() http.Handler {
+	v1 := http.NewServeMux()
+	v1.HandleFunc("POST /v1/search", s.handleSearch)
+	v1.HandleFunc("POST /v1/chunks", s.handlePutChunks)
+	v1.HandleFunc("DELETE /v1/chunks/{chunk_id}", s.handleDeleteChunk)
+	v1.HandleFunc("DELETE /v1/sources/{source_id}/chunks", s.handleDeleteBySource)
+	v1.HandleFunc("DELETE /v1/documents/{document_id}/chunks", s.handleDeleteByDocument)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
-	mux.HandleFunc("POST /v1/search", s.handleSearch)
-	mux.HandleFunc("POST /v1/chunks", s.handlePutChunks)
-	mux.HandleFunc("DELETE /v1/chunks/{chunk_id}", s.handleDeleteChunk)
-	mux.HandleFunc("DELETE /v1/sources/{source_id}/chunks", s.handleDeleteBySource)
+	mux.Handle("/v1/", s.requireToken(v1))
 
 	return mux
 }

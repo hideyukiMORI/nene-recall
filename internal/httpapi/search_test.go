@@ -27,11 +27,13 @@ func sampleResult(t *testing.T) index.Result {
 
 	page := 3
 	label := "第2章"
+	external := int64(9001)
 
 	return index.Result{
 		Chunk: chunk.Chunk{
 			ID:           42,
 			OrgID:        mustOrg(t, 1),
+			ExternalID:   &external,
 			DocumentID:   7,
 			SourceID:     70,
 			ChunkIndex:   2,
@@ -43,6 +45,22 @@ func sampleResult(t *testing.T) index.Result {
 		VectorScore:  0.8,
 		LexicalScore: 0,
 	}
+}
+
+// searchResultView は応答1件を受け取る形。
+//
+// 🔴 スコアをポインタで受けるのは、「0 が返った」と「キーが無い」を区別する
+// ためである。値型にするとフィールドを消しても 0 として通ってしまい、
+// 「内訳を必ず返す」という契約が黙って外れる。
+type searchResultView struct {
+	ChunkID      int64    `json:"chunk_id"`
+	ExternalID   *int64   `json:"external_id"`
+	Content      string   `json:"content"`
+	PageNumber   *int     `json:"page_number"`
+	SectionLabel *string  `json:"section_label"`
+	Score        float32  `json:"score"`
+	VectorScore  *float32 `json:"vector_score"`
+	LexicalScore *float32 `json:"lexical_score"`
 }
 
 // TestSearchResponseMatchesOpenAPI は応答の形を OpenAPI と突き合わせる。
@@ -64,16 +82,8 @@ func TestSearchResponseMatchesOpenAPI(t *testing.T) {
 	}
 
 	var body struct {
-		Results []struct {
-			ChunkID      int64    `json:"chunk_id"`
-			Content      string   `json:"content"`
-			PageNumber   *int     `json:"page_number"`
-			SectionLabel *string  `json:"section_label"`
-			Score        float32  `json:"score"`
-			VectorScore  *float32 `json:"vector_score"`
-			LexicalScore *float32 `json:"lexical_score"`
-		} `json:"results"`
-		EmbedderID string `json:"embedder_id"`
+		Results    []searchResultView `json:"results"`
+		EmbedderID string             `json:"embedder_id"`
 	}
 
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
@@ -89,14 +99,31 @@ func TestSearchResponseMatchesOpenAPI(t *testing.T) {
 		t.Errorf("chunk_id/content = %d/%q", got.ChunkID, got.Content)
 	}
 
-	// 🔴 内訳を必ず返す。合成値だけでは、検索が外したときにベクトル側と語彙側の
-	// どちらが原因かを切り分けられない。
-	if got.VectorScore == nil || got.LexicalScore == nil {
-		t.Errorf("vector_score / lexical_score が応答に無い: %s", rec.Body.String())
-	}
+	assertResultCarriesExternalIDAndScores(t, got, rec.Body.String())
 
 	if body.EmbedderID != "bge-m3:1024" {
 		t.Errorf("embedder_id = %q", body.EmbedderID)
+	}
+}
+
+// assertResultCarriesExternalIDAndScores は1件の応答が外部 id とスコアの内訳を
+// 持っていることを見る。
+//
+// 🔴 外部 id を必ず返す。Corpus はこれで自分の chunks を引き直し、soft delete の
+// 生存確認を掛ける (ADR 0020 Decision 6)。chunk_id は Recall の採番なので、
+// これが落ちると二段フィルタが成立しない。
+//
+// 🔴 スコアの内訳も必ず返す。合成値だけでは、検索が外したときにベクトル側と
+// 語彙側のどちらが原因かを切り分けられない。
+func assertResultCarriesExternalIDAndScores(t *testing.T, got searchResultView, raw string) {
+	t.Helper()
+
+	if got.ExternalID == nil || *got.ExternalID != 9001 {
+		t.Errorf("external_id = %v, want 9001", got.ExternalID)
+	}
+
+	if got.VectorScore == nil || got.LexicalScore == nil {
+		t.Errorf("vector_score / lexical_score が応答に無い: %s", raw)
 	}
 }
 

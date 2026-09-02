@@ -39,6 +39,7 @@ func newE2EServer(t *testing.T, ts *testStore) http.Handler {
 		EmbedDimensions: 1024,
 		OllamaBaseURL:   "http://localhost:11434",
 		VoyageAPIKey:    "",
+		APIToken:        "",
 		DefaultAlpha:    1,
 	}
 
@@ -181,6 +182,135 @@ func assertDeleteBySource(t *testing.T, srv http.Handler) {
 
 	if got.Deleted != 2 {
 		t.Errorf("deleted = %d, want 2", got.Deleted)
+	}
+}
+
+// TestEndToEndExternalIDRoundTrip は外部 id の往復を HTTP から実 DB まで通しで見る。
+//
+// 🔑 この観点は偽ストアでは確かめられない。置き換えが本当に起きたか（＝行が
+// 増えていないか）は SQL の ON CONFLICT が担っており、偽 Writer は
+// 「言われたとおりの id を返す」だけだからである。DTO の取り違え——要求の
+// external_id を握り潰す、応答に載せ忘れる——も、両側の偽実装が辻褄を
+// 合わせたまま隠しうる (docs/adr/0020-phase2-corpus-integration-contract.md)。
+func TestEndToEndExternalIDRoundTrip(t *testing.T) {
+	e := newFakeEmbedder("fake:1024")
+	e.angles["Corpus 由来の本文"] = 0
+	e.angles["書き換えた本文"] = 0
+	e.angles["問い"] = 0
+
+	ts := newTestStore(t, e)
+	srv := newE2EServer(t, ts)
+
+	first := putWithExternalID(t, srv, "Corpus 由来の本文")
+	second := putWithExternalID(t, srv, "書き換えた本文")
+
+	if second.ChunkIDs[0] != first.ChunkIDs[0] {
+		t.Errorf("🔴 chunk_id = %d, want %d（置き換えではなく新規採番になっている）",
+			second.ChunkIDs[0], first.ChunkIDs[0])
+	}
+
+	if len(second.ExternalIDs) != 1 || second.ExternalIDs[0] == nil || *second.ExternalIDs[0] != 777 {
+		t.Errorf("external_ids = %v, want [777]", second.ExternalIDs)
+	}
+
+	assertSearchCarriesExternalID(t, srv)
+	assertDeleteByDocument(t, srv)
+}
+
+// putWithExternalID は external_id=777 の1件を投入して応答を返す。
+func putWithExternalID(t *testing.T, srv http.Handler, content string) putResponse {
+	t.Helper()
+
+	body := `{"org_id":1,"chunks":[{"external_id":777,"document_id":55,"source_id":10,` +
+		`"chunk_index":0,"content":"` + content + `"}]}`
+
+	rec := call(t, srv, callSpec{method: http.MethodPost, path: "/v1/chunks", body: body})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("投入 status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+
+	var got putResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("投入の応答が JSON ではない: %v", err)
+	}
+
+	if got.Accepted != 1 || len(got.ChunkIDs) != 1 {
+		t.Fatalf("accepted = %d, chunk_ids = %v", got.Accepted, got.ChunkIDs)
+	}
+
+	return got
+}
+
+// putResponse は POST /v1/chunks の応答。
+type putResponse struct {
+	Accepted    int      `json:"accepted"`
+	ChunkIDs    []int64  `json:"chunk_ids"`
+	ExternalIDs []*int64 `json:"external_ids"`
+}
+
+// assertSearchCarriesExternalID は検索結果に外部 id が載ることを通しで確かめる。
+//
+// 置き換えが本当に1行に収まったことも、ここで件数として見える。
+func assertSearchCarriesExternalID(t *testing.T, srv http.Handler) {
+	t.Helper()
+
+	rec := call(t, srv, callSpec{
+		method: http.MethodPost,
+		path:   "/v1/search",
+		body:   `{"org_id":1,"query":"問い","limit":10}`,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("検索 status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+
+	var got struct {
+		Results []struct {
+			ExternalID *int64 `json:"external_id"`
+			Content    string `json:"content"`
+		} `json:"results"`
+	}
+
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("検索の応答が JSON ではない: %v", err)
+	}
+
+	if len(got.Results) != 1 {
+		t.Fatalf("🔴 結果 = %d 件, want 1（置き換えのはずが行が増えている）: %s",
+			len(got.Results), rec.Body.String())
+	}
+
+	if got.Results[0].ExternalID == nil || *got.Results[0].ExternalID != 777 {
+		t.Errorf("external_id = %v, want 777", got.Results[0].ExternalID)
+	}
+
+	if got.Results[0].Content != "書き換えた本文" {
+		t.Errorf("content = %q, want 書き換えた本文（更新されていない）", got.Results[0].Content)
+	}
+}
+
+// assertDeleteByDocument は document 単位の削除が通しで効くことを確かめる。
+func assertDeleteByDocument(t *testing.T, srv http.Handler) {
+	t.Helper()
+
+	rec := call(t, srv, callSpec{
+		method: http.MethodDelete,
+		path:   "/v1/documents/55/chunks?org_id=1",
+		body:   "",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("削除 status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+
+	var got struct {
+		Deleted int `json:"deleted"`
+	}
+
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("削除の応答が JSON ではない: %v", err)
+	}
+
+	if got.Deleted != 1 {
+		t.Errorf("deleted = %d, want 1", got.Deleted)
 	}
 }
 

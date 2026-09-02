@@ -134,9 +134,27 @@ func run(log *slog.Logger) error {
 		// 起動すると最初の検索が不一致エラーで落ちる（ADR 0018）。
 		slog.String("tokenizer_id", tokenizer.ID()),
 		slog.String("ollama_url", cfg.OllamaBaseURL),
+		// 🔴 トークンそのものは絶対に出さない。長さも先頭数文字も出さない。
+		// 運用者が知る必要があるのは「認証が効いているか」だけである
+		// (docs/adr/0020-phase2-corpus-integration-contract.md Decision 3)。
+		slog.String("auth", authState(cfg)),
 	)
 
 	return serve(log, cfg, handler)
+}
+
+// authState は起動ログに出す認証の状態を返す。
+//
+// 🔴 戻り値は "enabled" か "disabled" の2値だけである。トークンの一部・長さ・
+// ハッシュのいずれもここから出さない。RECALL_API_TOKEN は VOYAGE_API_KEY と
+// 同じ扱いの秘密であり、config.Config が String() を持たないのと同じ理由で、
+// 値がログへ流れる経路を1本も作らない (GO-014)。
+func authState(cfg config.Config) string {
+	if cfg.APIToken == "" {
+		return "disabled"
+	}
+
+	return "enabled"
 }
 
 // buildEmbedder は設定から埋め込みプロバイダを組み立てる。

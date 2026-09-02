@@ -15,6 +15,12 @@ import (
 const (
 	envURL   = "RECALL_URL"
 	envOrgID = "RECALL_ORG_ID"
+	// envToken はサーバの RECALL_API_TOKEN と対になる共有トークン。
+	//
+	// 🔴 変数名をサーバ側と別にしてある。同じ機械で両方を動かすとき、サーバの
+	// 環境変数がクライアントにも効くと「設定した覚えのないトークンが付いていた」
+	// が起きる。送る側と受ける側は別々に設定させる。
+	envToken = "RECALL_TOKEN"
 )
 
 // defaultURL はサーバの既定の宛先。
@@ -63,18 +69,23 @@ const (
 type commonFlags struct {
 	url     string
 	org     string
+	token   string
 	timeout time.Duration
 	asJSON  bool
 }
 
 // registerCommon は共通フラグを FlagSet に登録する。
 func registerCommon(fs *flag.FlagSet) *commonFlags {
-	c := &commonFlags{url: "", org: "", timeout: defaultTimeout, asJSON: false}
+	c := &commonFlags{url: "", org: "", token: "", timeout: defaultTimeout, asJSON: false}
 
 	fs.StringVar(&c.url, "url", "",
 		"サーバの URL（未指定なら $"+envURL+"、無ければ "+defaultURL+"）")
 	fs.StringVar(&c.org, "org", "",
 		"org_id（未指定なら $"+envOrgID+"、無ければ既定値）")
+	// 🔴 既定値を持たせない。トークンは秘密であり、「未指定なら既定のトークン」に
+	// すると設定を忘れた全員が同じ鍵を使う状態になる。省略時はヘッダを付けない。
+	fs.StringVar(&c.token, "token", "",
+		"Bearer トークン（未指定なら $"+envToken+"、無ければ付けない）")
 	fs.DurationVar(&c.timeout, "timeout", defaultTimeout, "1リクエストの上限")
 	fs.BoolVar(&c.asJSON, "json", false, "サーバ応答の生 JSON をそのまま標準出力へ出す")
 
@@ -83,8 +94,14 @@ func registerCommon(fs *flag.FlagSet) *commonFlags {
 
 // options は解決済みの共通設定。
 type options struct {
-	url     string
-	orgID   org.ID
+	url   string
+	orgID org.ID
+	// token は Bearer トークン。空ならヘッダを付けない。
+	//
+	// 🔴 これを診断行に出さないこと。announceOrg が出すのは org_id だけである。
+	// どこから取ったか（フラグか環境変数か）も出さない——org_id と違って、
+	// 取り違えても他人のデータが見えるわけではなく、出す利益が無い。
+	token   string
 	orgFrom orgSource
 	timeout time.Duration
 	asJSON  bool
@@ -100,10 +117,24 @@ func (c *commonFlags) resolve() (options, error) {
 	return options{
 		url:     resolveURL(c.url),
 		orgID:   id,
+		token:   resolveToken(c.token),
 		orgFrom: from,
 		timeout: c.timeout,
 		asJSON:  c.asJSON,
 	}, nil
+}
+
+// resolveToken は --token → $RECALL_TOKEN の順でトークンを決める。
+//
+// 🔴 org_id と違って既定値は無い。どちらも空なら空を返し、client が
+// Authorization ヘッダを付けない。サーバ側が認証を要求していなければそれで通り、
+// 要求していれば 401 が返る——「付けたつもりで付いていない」は 401 で必ず表面化する。
+func resolveToken(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+
+	return os.Getenv(envToken)
 }
 
 // resolveURL は --url → $RECALL_URL → 既定 の順で宛先を決める。

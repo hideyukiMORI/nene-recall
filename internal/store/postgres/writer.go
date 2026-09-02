@@ -48,11 +48,36 @@ type encodedChunk struct {
 //
 // 🔴 lexemes 列は書かない。lexeme_text からの生成列であり、DB が導出する。
 // アプリケーションが両方を書く形にすると、片方だけ更新された行が作れてしまう。
+//
+// 🔑 ON CONFLICT を付けたのは Phase 2 の契約である
+// (docs/adr/0020-phase2-corpus-integration-contract.md Decision 1)。同じ
+// (org_id, external_id) の再投入は置き換えになる。Corpus の DocumentChunkReplacer は
+// delete → save なので通常は当たらないが、リトライで二重投入されても壊れない。
+//
+// 🔴 external_id が NULL の行はこの分岐に一切入らない。UNIQUE 制約が NULL どうしを
+// 重複とみなさないためで、単体運用（recallctl・評価ハーネス）の insert-only は
+// そのまま保たれる。分岐を Go 側に書き分けないのは、条件が SQL の制約と
+// 一致していることを目で確かめられる形に保つためである。
+//
+// 🔴 更新対象に id と created_at を入れない。id を書き換えると、返した id を
+// 覚えている呼び出し側（評価ハーネスの写像・ADR 0013）が別の行を指す。
+// created_at は「いつ最初に入ったか」であり、置き換えで動かす意味が無い。
 const insertChunkSQL = `INSERT INTO chunks (
 	org_id, document_id, source_id, chunk_index, content,
 	page_number, section_label, embedder_id, embedding,
-	lexeme_text, tokenizer_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::vector, $10, $11)
+	lexeme_text, tokenizer_id, external_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::vector, $10, $11, $12)
+ON CONFLICT (org_id, external_id) DO UPDATE SET
+	document_id   = EXCLUDED.document_id,
+	source_id     = EXCLUDED.source_id,
+	chunk_index   = EXCLUDED.chunk_index,
+	content       = EXCLUDED.content,
+	page_number   = EXCLUDED.page_number,
+	section_label = EXCLUDED.section_label,
+	embedder_id   = EXCLUDED.embedder_id,
+	embedding     = EXCLUDED.embedding,
+	lexeme_text   = EXCLUDED.lexeme_text,
+	tokenizer_id  = EXCLUDED.tokenizer_id
 RETURNING id`
 
 // Put はチャンクを投入し、採番された id を入力と同じ順で返す。
@@ -107,22 +132,62 @@ func validateChunks(orgID org.ID, chunks []chunk.Chunk) error {
 	}
 
 	for i, c := range chunks {
-		if c.ID != 0 {
-			return fmt.Errorf("%w: chunks[%d] carries id %d", errChunkIDNotAccepted, i, c.ID)
+		if err := validateChunk(i, c, orgID); err != nil {
+			return err
+		}
+	}
+
+	return validateExternalIDsAreDistinct(chunks)
+}
+
+// validateChunk は1件ぶんの契約違反を見る。
+func validateChunk(i int, c chunk.Chunk, orgID org.ID) error {
+	if c.ID != 0 {
+		return fmt.Errorf("%w: chunks[%d] carries id %d", errChunkIDNotAccepted, i, c.ID)
+	}
+
+	if c.Content == "" {
+		return fmt.Errorf("%w: chunks[%d]", errEmptyContent, i)
+	}
+
+	// 🔴 0 と負値を弾く。列は NULL 可なので「外部 id を持たない」は nil で表す。
+	// 0 を通すと、置き換えの鍵が「0 番の外部 id」という実在しない値になる。
+	if c.ExternalID != nil && *c.ExternalID < 1 {
+		return fmt.Errorf("%w: chunks[%d] has %d", errExternalIDInvalid, i, *c.ExternalID)
+	}
+
+	// ゼロ値は「Chunk 側が org を持っていない」を意味する。chunk.Chunk の
+	// OrgID は JSON に出ない項目なので、外から来た値では未設定が普通である。
+	// 値が入っているのに引数と違うときだけ拒否する。黙って引数で上書きすると、
+	// 呼び出し側の取り違えが別テナントへの書き込みとして成功してしまう。
+	if c.OrgID != 0 && c.OrgID != orgID {
+		return fmt.Errorf("%w: chunks[%d] says %s, argument says %s",
+			errOrgMismatch, i, c.OrgID, orgID)
+	}
+
+	return nil
+}
+
+// validateExternalIDsAreDistinct は1回の Put に同じ external_id が2回無いことを見る。
+//
+// 🔴 黙って後勝ちにしない。upsert なので DB は最後の1件で上書きして成功し、
+// 「入力と同じ順の id を返す」契約も満たされてしまう——同じ id が2回並ぶ形で。
+// 呼び出し側から見ると n 件送って n 件受理されたのに行は n-1 件しかなく、
+// その差はどこにも現れない。ADR 0013 の写像はこの状態で静かに壊れる。
+func validateExternalIDsAreDistinct(chunks []chunk.Chunk) error {
+	seen := make(map[int64]int, len(chunks))
+
+	for i, c := range chunks {
+		if c.ExternalID == nil {
+			continue
 		}
 
-		if c.Content == "" {
-			return fmt.Errorf("%w: chunks[%d]", errEmptyContent, i)
+		if first, dup := seen[*c.ExternalID]; dup {
+			return fmt.Errorf("%w: chunks[%d] and chunks[%d] both use %d",
+				errDuplicateExternalID, first, i, *c.ExternalID)
 		}
 
-		// ゼロ値は「Chunk 側が org を持っていない」を意味する。chunk.Chunk の
-		// OrgID は JSON に出ない項目なので、外から来た値では未設定が普通である。
-		// 値が入っているのに引数と違うときだけ拒否する。黙って引数で上書きすると、
-		// 呼び出し側の取り違えが別テナントへの書き込みとして成功してしまう。
-		if c.OrgID != 0 && c.OrgID != orgID {
-			return fmt.Errorf("%w: chunks[%d] says %s, argument says %s",
-				errOrgMismatch, i, c.OrgID, orgID)
-		}
+		seen[*c.ExternalID] = i
 	}
 
 	return nil
@@ -229,7 +294,7 @@ func (s *Store) insertWithinTx(ctx context.Context, tx *sql.Tx, w pendingWrite) 
 		err := tx.QueryRowContext(ctx, insertChunkSQL,
 			w.orgID.Int64(), c.DocumentID, c.SourceID, c.ChunkIndex, c.Content,
 			c.PageNumber, c.SectionLabel, s.embedderID, w.encoded[i].vector,
-			w.encoded[i].lexemeText, s.tokenizerID,
+			w.encoded[i].lexemeText, s.tokenizerID, c.ExternalID,
 		).Scan(&id)
 		if err != nil {
 			return nil, fmt.Errorf("%w: chunks[%d]: %s", errWrite, i, err.Error())
@@ -267,15 +332,39 @@ func (s *Store) Delete(ctx context.Context, orgID org.ID, chunkID int64) error {
 // 件数を返すのは、再取り込みが DeleteBySource → Put の2手順である以上、
 // 呼び出し側が「何を消したうえで入れ直したか」を記録できる必要があるため。
 func (s *Store) DeleteBySource(ctx context.Context, orgID org.ID, sourceID int64) (int, error) {
+	const stmt = `DELETE FROM chunks WHERE org_id = $1 AND source_id = $2`
+
+	return s.deleteBy(ctx, orgID, stmt, sourceID)
+}
+
+// DeleteByDocument は文書の単位でまとめて削除し、消した件数を返す。
+//
+// 🔴 org_id を条件に含める理由は Delete と同じ。
+//
+// source 単位と別に持つのは、Corpus の削除経路が document 単位と source 単位の
+// 2つだからである (docs/adr/0020-phase2-corpus-integration-contract.md Decision 2)。
+// 片方しか無いと、Corpus 側で消した文書が Recall に残って検索に出続ける。
+// Corpus の sources / documents は soft delete で chunks は hard delete なので、
+// 伝え損ねた行は Corpus 側からは「消えている」ように見え、Recall だけが返す。
+func (s *Store) DeleteByDocument(ctx context.Context, orgID org.ID, documentID int64) (int, error) {
+	const stmt = `DELETE FROM chunks WHERE org_id = $1 AND document_id = $2`
+
+	return s.deleteBy(ctx, orgID, stmt, documentID)
+}
+
+// deleteBy は「org と1つの id で絞って消し、件数を返す」を実行する。
+//
+// 🔴 stmt を呼び出し側から受けるが、org_id が WHERE の先頭に来ることは
+// どの呼び出し元でも変わらない。分離条件を組み立てで作らないこと——文字列連結で
+// WHERE を組む形にすると、org_id を落とした SQL を書けるようになる。
+func (s *Store) deleteBy(ctx context.Context, orgID org.ID, stmt string, id int64) (int, error) {
 	if err := validateOrgID(orgID); err != nil {
 		return 0, err
 	}
 
-	const stmt = `DELETE FROM chunks WHERE org_id = $1 AND source_id = $2`
-
-	result, err := s.db.ExecContext(ctx, stmt, orgID.Int64(), sourceID)
+	result, err := s.db.ExecContext(ctx, stmt, orgID.Int64(), id)
 	if err != nil {
-		return 0, fmt.Errorf("%w: delete by source: %s", errWrite, err.Error())
+		return 0, fmt.Errorf("%w: bulk delete: %s", errWrite, err.Error())
 	}
 
 	affected, err := result.RowsAffected()

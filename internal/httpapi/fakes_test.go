@@ -62,6 +62,13 @@ func (f *fakeWriter) DeleteBySource(_ context.Context, orgID org.ID, _ int64) (i
 	return f.deleted, f.err
 }
 
+// DeleteByDocument は仕込まれた件数か error を返す。
+func (f *fakeWriter) DeleteByDocument(_ context.Context, orgID org.ID, _ int64) (int, error) {
+	f.lastOrgID = orgID
+
+	return f.deleted, f.err
+}
+
 // newFakes は正常応答を返す偽依存を作る。
 //
 // new() を使うのは、index.Query が exhaustruct の対象で、composite literal に
@@ -87,8 +94,27 @@ func testConfig() config.Config {
 		EmbedDimensions: 1024,
 		OllamaBaseURL:   "http://localhost:11434",
 		VoyageAPIKey:    "",
+		APIToken:        "",
 		DefaultAlpha:    0.8,
 	}
+}
+
+// authHeader は Authorization を1つ載せた要求を投げる。
+//
+// header が空文字なら Authorization を付けない。「ヘッダが無い」と
+// 「空のヘッダ」を分けて試せるようにするためである。
+func doWithAuth(t *testing.T, srv http.Handler, r request, header string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequestWithContext(t.Context(), r.method, r.path, strings.NewReader(r.body))
+	if header != "" {
+		req.Header.Set("Authorization", header)
+	}
+
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	return rec
 }
 
 // newDeps は指定の偽依存から Dependencies を作る。probe は常に正常。

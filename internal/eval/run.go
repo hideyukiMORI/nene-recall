@@ -326,7 +326,12 @@ func toChunks(orgID org.ID, passages []Passage) []chunk.Chunk {
 		}
 
 		chunks = append(chunks, chunk.Chunk{
-			ID:           0, // 明示 id は受け付けない（Phase 1）
+			ID: 0, // 明示 id は受け付けない（Phase 1）
+			// 🔴 評価コーパスに外部 id は無い。正解は eval_key で持ち、採番 id への
+			// 写像は Put の戻り値から実行時に作る (ADR 0013)。ここに external_id を
+			// 入れて安定キーの代わりにしないこと——評価セットの安定キーを2本にすると、
+			// どちらが正かが分からなくなる。
+			ExternalID:   nil,
 			OrgID:        orgID,
 			DocumentID:   id,
 			SourceID:     id,
