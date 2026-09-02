@@ -35,8 +35,8 @@ const (
 
 // Tokenizer は語彙検索のテキスト分割器の種類。
 //
-// 🔴 既定は bigram のままにする。kagome は**比較対象**として入っており
-// (ADR 0018)、既定を移すのは実測を見て別の ADR を書いてからである。
+// 🔴 既定は bigram のままにする。kagome と union は**比較対象**として入っており
+// (ADR 0018・ADR 0021)、既定を移すのは実測を見て別の ADR を書いてからである。
 //
 // 🔴 分割器を変えると保存済みの lexeme_text と噛み合わない。ストアが
 // tokenizer_id の不一致をエラーにするので静かには壊れないが、切り替えたら
@@ -48,6 +48,11 @@ const (
 	TokenizerBigram Tokenizer = "bigram"
 	// TokenizerKagome は形態素解析 (kagome + IPA 辞書)。比較実測用 (ADR 0018)。
 	TokenizerKagome Tokenizer = "kagome"
+	// TokenizerUnion は上の2つのトークンを連結する和集合。比較実測用 (ADR 0021)。
+	//
+	// 🔑 bigram と kagome の利得が別の機構から来ていた（表記ゆれ／言い換え）ので、
+	// 両取りできるかを測るために入れた選択肢である。
+	TokenizerUnion Tokenizer = "union"
 )
 
 // EmbedProvider は埋め込みプロバイダの種類。
@@ -82,6 +87,8 @@ type Config struct {
 	//
 	// kagome があるのは、bigram と形態素のどちらが良いか（要件定義 Q-2）を
 	// 同一データで比較実測するため。比較そのものが成果物になる (ADR 0018)。
+	// union は両者のトークンを連結したもので、ADR 0021 が次に測るものとして
+	// 指名した構成である。
 	Tokenizer Tokenizer
 
 	// EmbedProvider は埋め込みプロバイダ。RECALL_EMBEDDER、既定 "ollama"。
@@ -196,11 +203,11 @@ func (c Config) validate() error {
 // 設定を読んだ直後に落とす。
 func (c Config) validateTokenizer() error {
 	switch c.Tokenizer {
-	case TokenizerBigram, TokenizerKagome:
+	case TokenizerBigram, TokenizerKagome, TokenizerUnion:
 		return nil
 	default:
-		return fmt.Errorf("%w: RECALL_TOKENIZER must be %q or %q, got %q",
-			ErrUnknownOption, TokenizerBigram, TokenizerKagome, c.Tokenizer)
+		return fmt.Errorf("%w: RECALL_TOKENIZER must be %q, %q or %q, got %q",
+			ErrUnknownOption, TokenizerBigram, TokenizerKagome, TokenizerUnion, c.Tokenizer)
 	}
 }
 

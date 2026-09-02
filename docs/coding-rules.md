@@ -236,7 +236,7 @@ cmd/recall ──▶ internal/httpapi ──▶ internal/index (契約) ◀─�
 | `internal/embed` | 契約 | 対象 | — |
 | `internal/embed/ollama` | 実装 | 対象外（`net/http`・`time` 可） | `embedder-is-wired-only-in-cmd` |
 | `internal/lexical` | 契約 | 対象 | — |
-| `internal/lexical/bigram`・`internal/lexical/kagome` | 実装 | 対象外（`golang.org/x/text`・辞書 可） | 配線点でのみ選ぶ（`RECALL_TOKENIZER`） |
+| `internal/lexical/bigram`・`internal/lexical/kagome`・`internal/lexical/union` | 実装 | 対象外（`golang.org/x/text`・辞書 可） | 配線点でのみ選ぶ（`RECALL_TOKENIZER`） |
 
 実装が中核の制約を免れるのではない。**制約の種類が変わる**——純粋性の代わりに
 「具体実装を知ってよいのは配線点（`cmd`）だけ」という依存方向の制限を受ける。

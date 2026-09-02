@@ -36,7 +36,8 @@ EVAL_FUSION ?=
 EVAL_STORE ?=
 EVAL_SQLITE_PATH ?=
 # 🔴 EVAL_TOKENIZER は「どの分割器で測るか」。既定は cmd/eval の bigram。
-#    kagome は比較実測用（ADR 0018）。既定を移すのは実測を見てからである。
+#    kagome（ADR 0018）と union（ADR 0021・両者の連結）は比較実測用。
+#    既定を移すのは実測を見てからである。
 EVAL_TOKENIZER ?=
 # 🔴 EVAL_DISTRACTORS は「正解にならない紛れ込みの JSONL」（ADR 0019）。
 #    testdata/eval/ は1バイトも変えず、10万件は別のファイルとして足す。
@@ -174,6 +175,7 @@ tools:
 ##     make eval EVAL_LABEL=rrf EVAL_FUSION=rrf      （順位融合・alpha は無視される）
 ##     make eval EVAL_LABEL=sqlite EVAL_STORE=sqlite （比較用の SQLite・ADR 0017）
 ##     make eval EVAL_LABEL=kagome EVAL_TOKENIZER=kagome （形態素分割・ADR 0018）
+##     make eval EVAL_LABEL=union EVAL_TOKENIZER=union   （bigram と形態素の和集合・ADR 0021）
 ##
 ## 🔑 10万件規模の実測（ADR 0019）。紛れ込みは tools/wikidistract で生成する
 ##    （手順は tools/wikidistract/README.md）。初回は埋め込みに約20分かかり、

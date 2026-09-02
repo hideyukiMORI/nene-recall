@@ -6,6 +6,7 @@ import (
 	"github.com/hideyukiMORI/nene-recall/internal/lexical"
 	"github.com/hideyukiMORI/nene-recall/internal/lexical/bigram"
 	"github.com/hideyukiMORI/nene-recall/internal/lexical/kagome"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical/union"
 	"github.com/hideyukiMORI/nene-recall/internal/store/sqlite"
 )
 
@@ -26,7 +27,9 @@ import (
 //
 // 🔴 往復同一性は分割器ごとに確かめる。ADR 0018 で分割器が2つになった以上、
 // 片方だけで往復を見ても、もう片方が ascii トークナイザと噛み合っているかは
-// 分からない。
+// 分からない。ADR 0021 の和集合 (internal/lexical/union) も同じ理由で回す。
+// 和集合は同じ語を2回並べるので、FTS5 の位置情報とトークン頻度が構成要素の
+// どちらとも違う——構成要素が閉じていることは、和集合が閉じる根拠にならない。
 
 // roundTripTokenizer は往復同一性を確かめる分割器1つ。
 type roundTripTokenizer struct {
@@ -34,7 +37,7 @@ type roundTripTokenizer struct {
 	tokenizer lexical.Tokenizer
 }
 
-// roundTripTokenizers は実物の分割器を両方返す。
+// roundTripTokenizers は実物の分割器をすべて返す。
 func roundTripTokenizers(t *testing.T) []roundTripTokenizer {
 	t.Helper()
 
@@ -43,9 +46,15 @@ func roundTripTokenizers(t *testing.T) []roundTripTokenizer {
 		t.Fatalf("kagome.New(): %v", err)
 	}
 
+	both, err := union.New()
+	if err != nil {
+		t.Fatalf("union.New(): %v", err)
+	}
+
 	return []roundTripTokenizer{
 		{name: "bigram", tokenizer: bigram.New()},
 		{name: "kagome", tokenizer: morphological},
+		{name: "union", tokenizer: both},
 	}
 }
 
