@@ -70,10 +70,20 @@ type Query struct {
 
 // Dataset は評価セット全体。
 type Dataset struct {
-	// Passages は検索対象のコーパス。正解にならない紛れ込み（distractor）を含んでよい。
+	// Passages は検索対象のコーパス。正解注釈が指しうるのはここだけである。
 	Passages []Passage
 	// Queries は評価クエリ。
 	Queries []Query
+	// Distractors は正解にならない紛れ込み。
+	//
+	// 🔴 Passages と分けて持つ。混ぜると「正解になりうる行」と「絶対に
+	// ならない行」が同じ列に並び、どちらの意味で読むかがコード上で決まらなく
+	// なる。分けてあるので、正解注釈の検査 (ValidateDataset) は Passages だけを
+	// 見ればよく、10万件を足しても検査の意味が変わらない
+	// (docs/adr/0019-large-scale-benchmark-corpus.md Decision 2)。
+	//
+	// 空でよい。省略時は 259 件だけの、従来と同じ計測になる。
+	Distractors []Distractor
 }
 
 // jsonlLine は JSONL の1行と、その行番号。

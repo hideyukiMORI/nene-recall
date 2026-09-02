@@ -28,6 +28,7 @@ func smallDataset() eval.Dataset {
 				Tags: []string{"言い換え"}, Note: "2位に来るはず",
 			},
 		},
+		Distractors: nil,
 	}
 }
 
@@ -43,7 +44,7 @@ func defaultOptions(t *testing.T, rounds int) eval.Options {
 	return eval.Options{
 		OrgID: id, Alpha: 1, AlphaNote: "not tuned",
 		Limit: eval.DefaultLimit, Rounds: rounds,
-		Ranking: testRanking(),
+		Ranking: testRanking(), Distractors: nil, EmbedCache: false,
 	}
 }
 
@@ -341,18 +342,19 @@ func TestMeasureRejectsInvalidOptions(t *testing.T) {
 	cases := map[string]eval.Options{
 		"org_id がゼロ値": {
 			OrgID: 0, Alpha: 1, AlphaNote: note, Limit: 10, Rounds: 1, Ranking: testRanking(),
+			Distractors: nil, EmbedCache: false,
 		},
 		"limit が 0": {
 			OrgID: valid.OrgID, Alpha: 1, AlphaNote: note, Limit: 0, Rounds: 1,
-			Ranking: testRanking(),
+			Ranking: testRanking(), Distractors: nil, EmbedCache: false,
 		},
 		"rounds が 0": {
 			OrgID: valid.OrgID, Alpha: 1, AlphaNote: note, Limit: 10, Rounds: 0,
-			Ranking: testRanking(),
+			Ranking: testRanking(), Distractors: nil, EmbedCache: false,
 		},
 		"alpha が範囲外": {
 			OrgID: valid.OrgID, Alpha: 1.5, AlphaNote: note, Limit: 10, Rounds: 1,
-			Ranking: testRanking(),
+			Ranking: testRanking(), Distractors: nil, EmbedCache: false,
 		},
 		// 🔴 条件の記録が欠けたレポートは、後から条件を特定できないので正本に
 		// なれない。融合方式の記録が空なら計測そのものを止める。
@@ -362,6 +364,7 @@ func TestMeasureRejectsInvalidOptions(t *testing.T) {
 				Fusion: "", Store: "", LexicalScorer: "", TokenizerID: "",
 				TsRankNormalization: nil, RRFK: nil,
 			},
+			Distractors: nil, EmbedCache: false,
 		},
 		// 🔴 分割器の記録が無いレポートは、bigram と形態素のどちらで測ったかを
 		// 後から特定できない (ADR 0018)。融合方式と同じく空を拒む。
@@ -372,13 +375,14 @@ func TestMeasureRejectsInvalidOptions(t *testing.T) {
 				TokenizerID:         "",
 				TsRankNormalization: intPtr(0), RRFK: intPtr(60),
 			},
+			Distractors: nil, EmbedCache: false,
 		},
 		// 🔴 但し書きが無い alpha は「調整済みの値」として読まれる
 		// (CLAUDE.md 地雷7)。文言は配線点が store に応じて選ぶので、
 		// この層でできるのは「空なら止める」ことだけである。
 		"alpha の但し書きが空": {
 			OrgID: valid.OrgID, Alpha: 1, AlphaNote: "", Limit: 10, Rounds: 1,
-			Ranking: testRanking(),
+			Ranking: testRanking(), Distractors: nil, EmbedCache: false,
 		},
 	}
 
@@ -398,8 +402,8 @@ func TestMeasureRejectsInvalidOptions(t *testing.T) {
 // TestMeasureRejectsAnEmptyDataset は空の入力を拒否することを見る。
 func TestMeasureRejectsAnEmptyDataset(t *testing.T) {
 	cases := map[string]eval.Dataset{
-		"コーパスが空": {Passages: nil, Queries: smallDataset().Queries},
-		"クエリが空":  {Passages: smallDataset().Passages, Queries: nil},
+		"コーパスが空": {Passages: nil, Queries: smallDataset().Queries, Distractors: nil},
+		"クエリが空":  {Passages: smallDataset().Passages, Queries: nil, Distractors: nil},
 	}
 
 	for name, ds := range cases {

@@ -174,6 +174,7 @@ func TestValidateDatasetCatchesDanglingRelevantKeys(t *testing.T) {
 			ID: "q-1", Text: "t", Relevant: []string{"a", "missing"},
 			Tags: []string{"語彙一致"}, Note: "n",
 		}},
+		Distractors: nil,
 	}
 
 	err := eval.ValidateDataset(ds, []string{"語彙一致"})
@@ -194,6 +195,7 @@ func TestValidateDatasetCatchesUnknownTags(t *testing.T) {
 			ID: "q-1", Text: "t", Relevant: []string{"a"},
 			Tags: []string{"未宣言のタグ"}, Note: "n",
 		}},
+		Distractors: nil,
 	}
 
 	if err := eval.ValidateDataset(ds, []string{"語彙一致"}); !errors.Is(err, eval.ErrInvalidDataset) {
@@ -210,6 +212,7 @@ func TestValidateDatasetReportsEveryProblemAtOnce(t *testing.T) {
 			{ID: "q-1", Text: "t", Relevant: []string{"x"}, Tags: []string{"語彙一致"}, Note: "n"},
 			{ID: "q-2", Text: "t", Relevant: []string{"y"}, Tags: []string{"未宣言"}, Note: "n"},
 		},
+		Distractors: nil,
 	}
 
 	err := eval.ValidateDataset(ds, []string{"語彙一致"})
@@ -227,7 +230,7 @@ func TestValidateDatasetReportsEveryProblemAtOnce(t *testing.T) {
 // TestValidateDatasetRejectsAnEmptyVocabulary は、語彙が空のときに
 // 「全部のタグが未知」ではなく設定の誤りとして落ちることを見る。
 func TestValidateDatasetRejectsAnEmptyVocabulary(t *testing.T) {
-	ds := eval.Dataset{Passages: nil, Queries: nil}
+	ds := eval.Dataset{Passages: nil, Queries: nil, Distractors: nil}
 
 	if err := eval.ValidateDataset(ds, nil); !errors.Is(err, eval.ErrInvalidDataset) {
 		t.Errorf("err = %v, want ErrInvalidDataset", err)
@@ -248,6 +251,7 @@ func TestValidateDatasetAcceptsAConsistentSet(t *testing.T) {
 			ID: "q-1", Text: "t", Relevant: []string{"a"},
 			Tags: []string{"語彙一致"}, Note: "n",
 		}},
+		Distractors: nil,
 	}
 
 	if err := eval.ValidateDataset(ds, []string{"語彙一致", "言い換え"}); err != nil {

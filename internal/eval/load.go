@@ -53,7 +53,9 @@ func LoadDataset(corpus, queries, tags SourceFile) (LoadedDataset, error) {
 		return LoadedDataset{}, err
 	}
 
-	dataset := Dataset{Passages: passages, Queries: parsedQueries}
+	// 紛れ込みはこの3ファイルには入らない。別のファイルとして配線点が足す
+	// (docs/adr/0019-large-scale-benchmark-corpus.md Decision 2)。
+	dataset := Dataset{Passages: passages, Queries: parsedQueries, Distractors: nil}
 	if err := ValidateDataset(dataset, vocabulary.Names()); err != nil {
 		return LoadedDataset{}, err
 	}

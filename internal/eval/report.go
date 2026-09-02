@@ -52,7 +52,19 @@ import (
 // 🔴 項目を1つ足しただけでも版を上げる。上げないと「tokenizer_id の無い
 // レポート」が2つの意味を持つ——様式が古いのか、その実行で分割器を記録し
 // なかったのか、読む側から区別できない。v2 と v3 も純粋な追加で上げている。
-const ReportSchema = "nene-recall/eval-report/v5"
+//
+// v6 (2026-09-02) で変えたところ（10万件規模の実測・ADR 0019）:
+//   - conditions に distractors（紛れ込みの path・sha256・件数）を足した。
+//     投入していなければ**キーごと出ない**
+//   - conditions に embed_cache（埋め込みをディスクから再利用したか）を足した
+//
+// 🔴 v6 も追加だけである。v5 のレポートを読む道具は、増えた2項目を無視すれば
+// そのまま読める。それでも版を上げるのは、**紛れ込みの有無が recall の意味を
+// 変える**からである。259 件だけで測った 0.83 と、10万件の紛れ込みの中で測った
+// 0.83 は同じ数字ではない。版が同じだと「conditions に distractors が無い」ことが
+// 「紛れ込み無しで測った」なのか「その項目を持たない古い様式」なのかを区別
+// できず、並べて読めなくなる。
+const ReportSchema = "nene-recall/eval-report/v6"
 
 // Report は1回の計測の全記録。JSON でそのまま docs/benchmarks/data/ に残す。
 //
@@ -190,6 +202,24 @@ type Conditions struct {
 	Ranking RankingSettings `json:"ranking"`
 	// PercentileMethod はパーセンタイルの定義。
 	PercentileMethod string `json:"percentile_method"`
+	// Distractors は投入した紛れ込みの同一性。投入していなければキーごと出ない。
+	//
+	// 🔴 これが無いと、259 件だけで測った数字と 10万件の紛れ込みの中で測った
+	// 数字を並べて読めない。recall の定義は変わらないが、意味は変わる——
+	// 「正解が上位 10 件に残ったか」の難しさが桁で違う
+	// (docs/adr/0019-large-scale-benchmark-corpus.md Decision 2)。
+	//
+	// 🔴 ポインタなのは「無い」と「0 件」を区別するためである。0 件の
+	// 紛れ込みファイルは LoadDistractorFile が拒否するので、nil だけが
+	// 「紛れ込み無しで測った」を意味する (GO-004)。
+	Distractors *FileInput `json:"distractors,omitempty"`
+	// EmbedCache は埋め込みをディスクから再利用したか。
+	//
+	// 🔑 true のとき、投入に要した時間は GPU の速さを表さない。クエリ側の
+	// 埋め込みはキャッシュしないので、系統1 の latency は影響を受けない
+	// (ADR 0019 Decision 3)。この区別が記録に無いと、取り込み時間の桁違いが
+	// 「速くなった」と読まれる。
+	EmbedCache bool `json:"embed_cache"`
 }
 
 // RankingSettings はストアが順位付けに使った条件の記録。

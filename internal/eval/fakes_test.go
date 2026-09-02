@@ -47,6 +47,11 @@ type fakeIndex struct {
 	foreignID int64
 	// extraIDs が真なら Put が入力より多い id を返す（契約違反の再現）。
 	extraIDs bool
+	// putBatches は Put が受け取った件数を呼ばれた順に並べたもの。
+	//
+	// 🔑 10万件を1回の Put に渡さないこと（バッチ投入）を確かめるために要る。
+	// 合計だけを数えると、1回で全部渡す実装でもテストが通ってしまう。
+	putBatches []int
 }
 
 // newFakeIndex は空の偽索引を作る。
@@ -63,6 +68,7 @@ func newFakeIndex() *fakeIndex {
 		divergent:   false,
 		foreignID:   0,
 		extraIDs:    false,
+		putBatches:  nil,
 	}
 }
 
@@ -71,6 +77,8 @@ func (f *fakeIndex) Put(_ context.Context, _ org.ID, chunks []chunk.Chunk) ([]in
 	if f.putErr != nil {
 		return nil, f.putErr
 	}
+
+	f.putBatches = append(f.putBatches, len(chunks))
 
 	ids := make([]int64, 0, len(chunks))
 

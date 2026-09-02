@@ -139,46 +139,7 @@ func TestLoadDatasetReportsWhichFileIsBroken(t *testing.T) {
 // TestEncodeReportProducesReadableJSON は、書き出す形が git の差分として
 // 読めることを見る。
 func TestEncodeReportProducesReadableJSON(t *testing.T) {
-	report := eval.NewReport(
-		eval.Environment{
-			GitRevision: "abc", GitModified: false, GoVersion: "go1.27.0",
-			EmbedderID: "bge-m3:1024", OllamaVersion: "0.33.2", ModelDigest: "digest",
-			PostgresVersion: "17.11", PgvectorVersion: "0.8.6", SQLiteVersion: "",
-			GPUNote: "",
-		},
-		eval.Inputs{
-			Corpus:  eval.FileInput{Path: "c", SHA256: "1", Count: 1},
-			Queries: eval.FileInput{Path: "q", SHA256: "2", Count: 1},
-			Tags:    eval.FileInput{Path: "t", SHA256: "3", Count: 1},
-		},
-		eval.Measurement{
-			Conditions: eval.Conditions{
-				OrgID: 1, Alpha: 0.7, AlphaNote: "not tuned", Limit: 10, Rounds: 5,
-				WarmupRounds: 1, KValues: eval.KValues(),
-				GoldLengthThresholdRunes: eval.GoldLengthThreshold,
-				LongChunkKeys:            eval.LongGoldKeys(),
-				Ranking:                  testReportRanking(),
-				PercentileMethod:         eval.PercentileMethod,
-			},
-			Queries: nil,
-			Summary: eval.Summary{
-				QueryCount: 0, Recall: nil, MRR: 0,
-				Latency: eval.LatencySummary{
-					WithEmbedding:    eval.LatencyStats{Samples: 0, MinMS: 0, P50MS: 0, P95MS: 0, MaxMS: 0},
-					WithoutEmbedding: eval.LatencyStats{Samples: 0, MinMS: 0, P50MS: 0, P95MS: 0, MaxMS: 0},
-				},
-				TagRecall:        nil,
-				MicroRecall:      eval.MicroRecall{Hits: 0, Total: 0, Cutoff: 10, Value: 0},
-				GoldLengthRecall: nil,
-				LongChunkRecall: eval.LongChunkRecall{
-					Keys: nil, Hits: 0, Total: 0, Value: 0,
-				},
-			},
-		},
-		time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
-	)
-
-	encoded, err := eval.EncodeReport(report)
+	encoded, err := eval.EncodeReport(emptyReport())
 	if err != nil {
 		t.Fatalf("EncodeReport: %v", err)
 	}
@@ -200,6 +161,50 @@ func TestEncodeReportProducesReadableJSON(t *testing.T) {
 	if decoded.Schema != eval.ReportSchema || decoded.Environment.ModelDigest != "digest" {
 		t.Errorf("読み戻した内容が違う: %+v", decoded.Environment)
 	}
+}
+
+// emptyReport は書き出しの形だけを見るための、計測結果が空のレポート。
+func emptyReport() eval.Report {
+	return eval.NewReport(
+		eval.Environment{
+			GitRevision: "abc", GitModified: false, GoVersion: "go1.27.0",
+			EmbedderID: "bge-m3:1024", OllamaVersion: "0.33.2", ModelDigest: "digest",
+			PostgresVersion: "17.11", PgvectorVersion: "0.8.6", SQLiteVersion: "",
+			GPUNote: "",
+		},
+		eval.Inputs{
+			Corpus:  eval.FileInput{Path: "c", SHA256: "1", Count: 1},
+			Queries: eval.FileInput{Path: "q", SHA256: "2", Count: 1},
+			Tags:    eval.FileInput{Path: "t", SHA256: "3", Count: 1},
+		},
+		eval.Measurement{
+			Conditions: eval.Conditions{
+				OrgID: 1, Alpha: 0.7, AlphaNote: "not tuned", Limit: 10, Rounds: 5,
+				WarmupRounds: 1, KValues: eval.KValues(),
+				GoldLengthThresholdRunes: eval.GoldLengthThreshold,
+				LongChunkKeys:            eval.LongGoldKeys(),
+				Ranking:                  testReportRanking(),
+				PercentileMethod:         eval.PercentileMethod,
+				Distractors:              nil,
+				EmbedCache:               false,
+			},
+			Queries: nil,
+			Summary: eval.Summary{
+				QueryCount: 0, Recall: nil, MRR: 0,
+				Latency: eval.LatencySummary{
+					WithEmbedding:    eval.LatencyStats{Samples: 0, MinMS: 0, P50MS: 0, P95MS: 0, MaxMS: 0},
+					WithoutEmbedding: eval.LatencyStats{Samples: 0, MinMS: 0, P50MS: 0, P95MS: 0, MaxMS: 0},
+				},
+				TagRecall:        nil,
+				MicroRecall:      eval.MicroRecall{Hits: 0, Total: 0, Cutoff: 10, Value: 0},
+				GoldLengthRecall: nil,
+				LongChunkRecall: eval.LongChunkRecall{
+					Keys: nil, Hits: 0, Total: 0, Value: 0,
+				},
+			},
+		},
+		time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
+	)
 }
 
 // TestRecallValueAt は集計値からの取り出しを見る。

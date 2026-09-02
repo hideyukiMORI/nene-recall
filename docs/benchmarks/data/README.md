@@ -44,6 +44,7 @@ make eval EVAL_LABEL=baseline GPU_NOTE="他アプリが 5.7GB 使用中"
 | `nene-recall/eval-report/v3` | 2026-09-02 | 比較用の SQLite ストアに合わせて拡張 |
 | `nene-recall/eval-report/v4` | 2026-09-02 | `conditions` をストア非依存で正確にした |
 | `nene-recall/eval-report/v5` | 2026-09-02 | 分割器を条件に記録した（形態素の導入・ADR 0018） |
+| `nene-recall/eval-report/v6` | 2026-09-02 | 紛れ込みと埋め込みキャッシュを条件に記録した（10万件規模・ADR 0019） |
 
 v2 で変えたのは3点。
 
@@ -181,3 +182,38 @@ bigram で行われた。`tokenizer_id` が bigram でないレポートの `alp
 ```bash
 make eval EVAL_LABEL=kagome EVAL_TOKENIZER=kagome  # 形態素分割（ADR 0018）
 ```
+
+## v6 — 紛れ込みと埋め込みキャッシュを条件に記録する（2026-09-02・ADR 0019）
+
+変えたのは2点。どちらも `conditions` への追加である。
+
+1. **`conditions.distractors`** — 投入した「正解にならない無関係文書」の
+   `path` / `sha256` / `count`。🔴 **投入していなければキーごと出ない。**
+   `nil` だけが「紛れ込み無しで測った」を意味する
+2. **`conditions.embed_cache`** — 取り込み側の埋め込みをディスクから
+   再利用したか（`true` / `false`）
+
+```bash
+make eval EVAL_LABEL=100k \
+  EVAL_DISTRACTORS=bin/wikidistract/distractors-100k.jsonl \
+  EVAL_EMBED_CACHE=bin/embed-cache
+```
+
+🔴 **`recall` の定義は変わらないが、意味は変わる。** 259 チャンクの中で測った
+`recall@10 = 0.83` と、10万件の無関係文書の中で測った `0.83` は同じ数字ではない。
+「正解が上位 10 件に残ったか」の難しさが桁で違う。**レポートを並べるときは
+必ず `conditions.distractors` を見ること。**
+
+🔴 **v5 以前のレポートは紛れ込みを投入していない。** 機能が入ったのが v6 と
+同じコミットなので、それ以前に選択肢は無かった。⇒ `distractors` が無い
+v5 以前のレポートは、**259 チャンクだけで測った数字**として読んでよい。
+
+🔑 **正解セット（`testdata/eval/`）は1バイトも変わっていない。** 紛れ込みは
+別のファイルとして渡され、どのクエリの正解にもならない（`eval_key` を持たない）。
+`inputs.corpus.sha256` が同じであれば、正解注釈は同じである。
+紛れ込みの生成手順とチェックサムは `tools/wikidistract/README.md`。
+
+⚠️ **`embed_cache: true` のとき、投入に要した時間は GPU の速さを表さない。**
+クエリ側の埋め込みはキャッシュしないので（ADR 0019 Decision 3）、
+**2系統の latency はどちらもキャッシュの影響を受けない。**
+影響を受けるのは計測前の取り込み時間だけである。
