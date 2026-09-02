@@ -204,6 +204,11 @@ linters:
             - pkg: "github.com/hideyukiMORI/nene-recall/internal/store"
               desc: "ARC-001: 具体ストアへの依存は cmd の配線点に閉じる。interface 越しに使う。"
 
+    # 🔴 これは許可リストではなく禁止リストである（allowed を書いていないので、
+    # 挙げていない依存は通る）。ARC-004 の「許可制」は ADR で運用する規則であり、
+    # ここが強制するのは「一度禁止したものが戻ってこないこと」だけである。
+    # ⇒ 新しい依存を足すときに書き足す場所は docs/coding-rules.md の ARC-004 と
+    #    ADR であって、ここではない。ここへ書くのは**禁じるとき**である。
     gomodguard_v2:
       blocked:
         - module: github.com/lib/pq
@@ -211,7 +216,10 @@ linters:
           reason: "非推奨。ドライバは pgx に統一する（CLAUDE.md 地雷5）。"
         - module: github.com/mattn/go-sqlite3
           recommendations: ["modernc.org/sqlite"]
-          reason: "cgo を要求する。純 Go に統一する（CLAUDE.md 地雷5）。"
+          reason: "cgo を要求する。純 Go に統一する（CLAUDE.md 地雷5）。SQLite ストアが使うのは推奨側の modernc.org/sqlite で、判断は ADR 0017 にある。"
+        - module: github.com/asg017/sqlite-vec-go-bindings
+          recommendations: ["modernc.org/sqlite"]
+          reason: "cgo を要求する（CLAUDE.md 地雷5）。SQLite 側のベクトルは Go 側の総当たりで計算する（ADR 0017 Decision 2）。"
         - module: github.com/pkg/errors
           recommendations: ["errors"]
           reason: "標準 errors と %w に統一する。error の作り方を1つに保つ。"

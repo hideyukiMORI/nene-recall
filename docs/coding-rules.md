@@ -254,13 +254,29 @@ cmd/recall ──▶ internal/httpapi ──▶ internal/index (契約) ◀─�
 
 ### ARC-004 — 外部依存は許可制
 
-明示的に禁止している依存: `lib/pq`（非推奨）・`mattn/go-sqlite3`（cgo）・
-`pkg/errors`（標準 `errors` に統一）・`sirupsen/logrus`（`log/slog` に統一）・
+明示的に禁止している依存: `lib/pq`（非推奨）・`mattn/go-sqlite3` と
+`sqlite-vec-go-bindings`（cgo）・`pkg/errors`（標準 `errors` に統一）・
+`sirupsen/logrus`（`log/slog` に統一）・
 `stretchr/testify`（アサーションを標準 `testing` の1つに保つ）。
 
-新しい依存を足すときは ADR を1本立てる。
+現在の直接依存と、それを認めた判断:
 
-- 機械強制: **active**（`gomodguard_v2`）
+| 依存 | 用途 | 根拠 |
+| --- | --- | --- |
+| `github.com/jackc/pgx/v5` | PostgreSQL ドライバ（`database/sql` 経由） | [ADR 0011](adr/0011-pgx-stdlib-driver.md) |
+| `golang.org/x/text` | NFKC 正規化（`internal/lexical/bigram`） | PR #7（語彙検索の導入） |
+| `modernc.org/sqlite` | SQLite ドライバ（純 Go・比較実測用のストア） | [ADR 0017](adr/0017-sqlite-store-for-comparison.md) |
+
+新しい依存を足すときは ADR を1本立て、この表に行を足す。
+
+🔴 `.golangci.yml` の `gomodguard_v2` は**禁止リストであって許可リストではない**
+（`allowed` を書いていないので、挙げていない依存は lint を通る）。つまり
+機械が止めるのは「一度禁止したものの再導入」だけで、**新しい依存の追加そのものは
+止まらない**。「lint が通ったから許可された」と読まないこと。許可制を実際に
+支えているのは、この表と ADR とレビューである。
+
+- 機械強制: **active**（`gomodguard_v2`。ただし止めるのは禁止済みの依存の
+  再導入だけで、新規依存の追加は止めない。上の🔴を参照）
 
 ### ARC-005 — プロセス環境に触るのは配線点だけ
 
