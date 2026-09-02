@@ -34,6 +34,11 @@ func TestOrgIDIsMandatory(t *testing.T) {
 		{"delete chunk: org_id が 0", http.MethodDelete, "/v1/chunks/1?org_id=0", ""},
 		{"delete chunk: org_id が非数値", http.MethodDelete, "/v1/chunks/1?org_id=abc", ""},
 		{"delete by source: org_id 欠落", http.MethodDelete, "/v1/sources/1/chunks", ""},
+		// 🔴 document 単位の削除も同じ縛りを受ける (ADR 0020 Decision 2)。
+		// 新しい口を足すたびにここへ足すこと——足し忘れても何も落ちない。
+		{"delete by document: org_id 欠落", http.MethodDelete, "/v1/documents/1/chunks", ""},
+		{"delete by document: org_id が 0", http.MethodDelete, "/v1/documents/1/chunks?org_id=0", ""},
+		{"delete by document: org_id が非数値", http.MethodDelete, "/v1/documents/1/chunks?org_id=abc", ""},
 	}
 
 	srv := newTestServer(t)

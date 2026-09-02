@@ -8,6 +8,10 @@ info:
 
     - 全ての操作は `org_id` を必須とする（ADR 0003）。省略・空・0 は 400。
     - レスポンスの `content` は Corpus 統合時には使わない。`chunk_id` で引き直す（ADR 0002）。
+    - 外部システム（Corpus）の id は `external_id` で受ける。`chunk_id` は Recall の採番で、
+      要求に書くと 400 になる（ADR 0020）。
+    - `RECALL_API_TOKEN` を設定すると `/v1/*` に Bearer 認証が掛かる。未設定なら認証なし。
+      `/healthz` `/readyz` は常に認証不要（ADR 0020 Decision 3）。
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
@@ -20,6 +24,15 @@ tags:
   - name: search
   - name: chunks
   - name: health
+
+# 🔴 既定を bearerAuth にして、認証不要の口だけが `security: []` で明示的に
+#    外れる形にする。逆（既定なし・必要な口に付ける）にすると、新しい口を
+#    足した人が付け忘れても文書上は正しく見えてしまう（ADR 0020 Decision 3）。
+#
+# ⚠️ サーバ側で RECALL_API_TOKEN が未設定なら認証は掛からない。ここでの
+#    bearerAuth は「設定されているときの契約」である。
+security:
+  - bearerAuth: []
 
 paths:
   /v1/search:
@@ -39,6 +52,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/SearchResponse' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
   /v1/chunks:
@@ -56,15 +70,9 @@ paths:
           description: 投入結果
           content:
             application/json:
-              schema:
-                type: object
-                required: [accepted, chunk_ids]
-                properties:
-                  accepted: { type: integer, description: 受理した件数 }
-                  chunk_ids:
-                    type: array
-                    items: { type: integer, format: int64 }
+              schema: { $ref: '#/components/schemas/PutChunksResponse' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
   /v1/chunks/{chunk_id}:
@@ -85,6 +93,7 @@ paths:
       responses:
         '204': { description: 削除した（対象が無くても 204） }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /v1/sources/{source_id}/chunks:
     delete:
@@ -105,18 +114,45 @@ paths:
           description: 削除件数
           content:
             application/json:
-              schema:
-                type: object
-                required: [deleted]
-                properties:
-                  deleted: { type: integer }
+              schema: { $ref: '#/components/schemas/DeleteCount' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # Corpus の削除経路が document 単位と source 単位の2つあるため、両方を持つ
+  # （ADR 0020 Decision 2）。片方しか無いと、Corpus 側で消した文書が Recall に
+  # 残って検索に出続ける。
+  /v1/documents/{document_id}/chunks:
+    delete:
+      tags: [chunks]
+      summary: document 単位でチャンクを一括削除する
+      operationId: deleteChunksByDocument
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: org_id
+          in: query
+          required: true
+          description: 必須。省略は 400（ADR 0003）
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        '200':
+          description: 削除件数
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeleteCount' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /healthz:
     get:
       tags: [health]
       summary: 依存の状態を返す
       operationId: healthz
+      # 🔴 監視の口は認証を要求しない。要求すると、トークンを持たない監視系から
+      #    「落ちている」と「認証されていない」の区別がつかなくなる（ADR 0020）。
+      security: []
       responses:
         '200':
           description: 正常
@@ -134,6 +170,7 @@ paths:
       tags: [health]
       summary: 受け入れ可否
       operationId: readyz
+      security: []
       responses:
         '200': { description: 受け入れ可能 }
         '503': { description: 準備中または受け入れ不可 }
@@ -205,7 +242,17 @@ components:
         chunk_id:
           type: integer
           format: int64
-          description: Corpus 統合時はこれで MySQL から本文を引き直す（ADR 0002）
+          description: |
+            Recall が採番した id。削除 API (`DELETE /v1/chunks/{chunk_id}`) の対象。
+            ⚠️ Corpus 側の id ではない。Corpus から本文を引き直すのは `external_id`
+            のほうである（ADR 0020 Decision 1 が2つを別の列に分けた）。
+        external_id:
+          type: [integer, 'null']
+          format: int64
+          description: |
+            投入時に受けた外部システム（Corpus）の id。持たない場合は null。
+            Corpus はこれで自分の chunks を引き直し、soft delete の生存確認を
+            掛ける（ADR 0020 Decision 6）。
         document_id: { type: integer, format: int64 }
         source_id: { type: integer, format: int64 }
         chunk_index: { type: integer }
@@ -247,19 +294,58 @@ components:
           type: integer
           format: int64
           description: |
-            Corpus 由来の chunk を投入する場合は Corpus 側の id を渡す。
-            省略時は Recall が採番する。
+            **指定すると 400（`chunk_id_not_accepted`）。** 外部システムの id は
+            `external_id` で渡すこと。
 
-            **Phase 1 では指定すると 400（`chunk_id_not_accepted`）。**
             id 列は `GENERATED BY DEFAULT AS IDENTITY` なので明示 id も書けるが、
             書いてもシーケンスは進まず、後続の採番が既存行と衝突する。
-            受け入れ方式は Phase 2 の ADR で決める。
+            「外部の識別子」と「自分の採番」を1つの列に混ぜない、というのが
+            ADR 0020 Decision 1 の判断である（この項目の留保はそこで解けた）。
+        external_id:
+          type: integer
+          format: int64
+          minimum: 1
+          description: |
+            外部システム（Corpus）側の chunk の id。省略すると null で保存される。
+
+            `UNIQUE (org_id, external_id)` が張ってあり、**同じ `(org_id, external_id)` の
+            再投入は置き換え**になる（content・埋め込み・語彙をまとめて更新し、
+            `chunk_id` は既存のものが返る）。
+            1回の要求に同じ `external_id` を2つ含めると 400。
+            0 と負値は 400（`external_id_invalid`）——「持たない」は省略で表す。
         document_id: { type: integer, format: int64 }
         source_id: { type: integer, format: int64 }
         chunk_index: { type: integer }
         content: { type: string, minLength: 1 }
         page_number: { type: [integer, 'null'] }
         section_label: { type: [string, 'null'] }
+
+    PutChunksResponse:
+      type: object
+      required: [accepted, chunk_ids, external_ids]
+      properties:
+        accepted: { type: integer, description: 受理した件数 }
+        chunk_ids:
+          type: array
+          description: |
+            採番された chunk_id を**入力と同じ順**で返す。置き換えが起きた行では
+            新規の採番ではなく既存行の id が入る（ADR 0020 Decision 1）。
+          items: { type: integer, format: int64 }
+        external_ids:
+          type: array
+          description: |
+            要求の `external_id` を `chunk_ids` と同じ順・同じ長さで返す。
+            指定が無かった要素は null。呼び出し側は自分の id と Recall の採番の
+            対応を、この1つの応答から作れる。
+          items:
+            type: [integer, 'null']
+            format: int64
+
+    DeleteCount:
+      type: object
+      required: [deleted]
+      properties:
+        deleted: { type: integer }
 
     Health:
       type: object
@@ -289,7 +375,23 @@ components:
             code: { type: string, example: org_id_required }
             message: { type: string }
 
+  securitySchemes:
+    # 🔴 共有トークン1本。JWT は採らない（ADR 0020 の却下表: サービス間の1対1で
+    #    claims も期限も要らず、鍵の配布と検証コードが増えるだけ）。
+    #    サーバ側で RECALL_API_TOKEN が空なら認証は掛からない。
+    bearerAuth:
+      type: http
+      scheme: bearer
+
   responses:
+    Unauthorized:
+      description: |
+        Bearer トークンが無い・一致しない・別スキーム。
+        `WWW-Authenticate: Bearer` を伴う。
+        🔴 応答にトークンそのものは一切含まれない（期待値も、受け取った値も、長さも）。
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     BadRequest:
       description: リクエストが不正（`org_id` の欠落を含む）
       content:

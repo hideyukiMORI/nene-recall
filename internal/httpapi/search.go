@@ -44,7 +44,13 @@ type searchRequest struct {
 // 語彙側のどちらが原因かを切り分けるため。合成値だけでは alpha の調整が
 // 当てずっぽうになる。
 type searchResult struct {
-	ChunkID      int64   `json:"chunk_id"`
+	ChunkID int64 `json:"chunk_id"`
+	// ExternalID は投入時に受けた外部システムの id。持たない行は null。
+	//
+	// 🔑 Corpus はこれで自分の chunks を引き直し、soft delete の生存確認を
+	// 掛ける (docs/adr/0020-phase2-corpus-integration-contract.md Decision 6)。
+	// chunk_id は Recall の採番なので、Corpus 側では引けない。
+	ExternalID   *int64  `json:"external_id"`
 	DocumentID   int64   `json:"document_id"`
 	SourceID     int64   `json:"source_id"`
 	ChunkIndex   int     `json:"chunk_index"`
@@ -156,6 +162,7 @@ func toSearchResults(results []index.Result) []searchResult {
 	for _, r := range results {
 		out = append(out, searchResult{
 			ChunkID:      r.Chunk.ID,
+			ExternalID:   r.Chunk.ExternalID,
 			DocumentID:   r.Chunk.DocumentID,
 			SourceID:     r.Chunk.SourceID,
 			ChunkIndex:   r.Chunk.ChunkIndex,

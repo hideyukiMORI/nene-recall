@@ -108,6 +108,20 @@ type Config struct {
 	// 構造体ごと %v で出力しても値が漏れる。ロギング時は個別フィールドを選ぶ。
 	VoyageAPIKey string
 
+	// APIToken は /v1/* を守る共有 Bearer トークン。RECALL_API_TOKEN、任意。
+	//
+	// 空なら認証なし（個人のローカル利用が既定）。設定されていれば
+	// Authorization: Bearer <token> が一致しない要求は 401 になる
+	// (docs/adr/0020-phase2-corpus-integration-contract.md Decision 3)。
+	//
+	// 🔴 VoyageAPIKey と同じ扱いの秘密である。ログにもエラー応答にも出さないこと。
+	// String() を実装しないのは意図的で、構造体ごと %v で出力すると漏れる。
+	// 起動ログに出してよいのは「有効か無効か」だけである。
+	//
+	// 🔴 「トークンが設定されていなければ既定のトークンを使う」を書かないこと。
+	// 既定値のある共有秘密は、設定を忘れた全員が同じ鍵を使う状態になる。
+	APIToken string
+
 	// DefaultAlpha は合成の既定の重み。RECALL_DEFAULT_ALPHA、既定 0.8。
 	//
 	// 0.8 は 2026-09-02 の評価セット・bge-m3:1024・bigram・語彙スコアのクエリ内
@@ -137,6 +151,7 @@ func Load() (Config, error) {
 		EmbedDimensions: 1024,
 		OllamaBaseURL:   env("RECALL_OLLAMA_URL", "http://localhost:11434"),
 		VoyageAPIKey:    os.Getenv("VOYAGE_API_KEY"),
+		APIToken:        os.Getenv("RECALL_API_TOKEN"),
 		DefaultAlpha:    0.8,
 	}
 

@@ -24,6 +24,37 @@ func setMinimalEnv(t *testing.T) {
 	t.Setenv("RECALL_OLLAMA_URL", "")
 	t.Setenv("RECALL_DEFAULT_ALPHA", "")
 	t.Setenv("VOYAGE_API_KEY", "")
+	t.Setenv("RECALL_API_TOKEN", "")
+}
+
+// TestLoadReadsAPIToken は共有 Bearer トークンの読み取りを固定する。
+//
+// 🔴 未設定は空文字であって、既定のトークンではない
+// (docs/adr/0020-phase2-corpus-integration-contract.md Decision 3)。
+// 既定値のある共有秘密は、設定を忘れた全員が同じ鍵を使う状態になる。
+// 空でも Load は成功する——認証なしが個人のローカル利用の既定だからである。
+func TestLoadReadsAPIToken(t *testing.T) {
+	setMinimalEnv(t)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() が失敗した: %v", err)
+	}
+
+	if cfg.APIToken != "" {
+		t.Errorf("🔴 未設定なのに APIToken = %q（既定のトークンを置いていないか）", cfg.APIToken)
+	}
+
+	t.Setenv("RECALL_API_TOKEN", "s3cret")
+
+	withToken, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() が失敗した: %v", err)
+	}
+
+	if withToken.APIToken != "s3cret" {
+		t.Errorf("APIToken = %q, want %q", withToken.APIToken, "s3cret")
+	}
 }
 
 // TestLoadAppliesDocumentedDefaults は、既定値が文書どおりであることを固定する。
@@ -132,6 +163,7 @@ func baseConfig() config.Config {
 		EmbedDimensions: 1024,
 		OllamaBaseURL:   "http://localhost:11434",
 		VoyageAPIKey:    "",
+		APIToken:        "",
 		DefaultAlpha:    0.8,
 	}
 }
