@@ -70,29 +70,64 @@ func TestMigrateCreatesChunksTable(t *testing.T) {
 	}
 }
 
-// TestNoVectorIndexExists は ADR 0007 の手順を機械で守る。
+// TestSearchIndexesExistWithCorrectOperatorClass は 0004 が張った2つの索引を検査する。
 //
-// 🔴 このテストは「索引を最初から作らない」をコメントではなく検査にするためにある。
-// ADR 0007 の成果物は pgvector を選んだことではなく「測ってから索引を入れた経路」で、
-// 最初から張ると before の数字が取れず、なぜ入れたのかを数字で語れなくなる。
-// 索引を入れるのは 10万件規模の p95 と recall を docs/benchmarks/ に記録した後で、
-// そのときにこのテストを before/after の記録と一緒に更新すること。
-func TestNoVectorIndexExists(t *testing.T) {
+// 🔴 このテストは TestNoVectorIndexExists を**反転**したものである。名前を
+// 変えた理由を残す:
+//
+// 旧テストは「ベクトル索引が1つも無いこと」を検査していた。守っていたのは
+// ADR 0007 の手順（1: 索引なしで完成 → 2: 10万件で測る → 3: 測ってから入れる）で、
+// 最初から張ると before の数字が取れなくなる、という一点である。
+// ⇒ 手順 2 は docs/benchmarks/2026-09-02-eval-100k-before-index.md で終わり、
+// **ADR 0007 の証拠は before 文書に移った。** 証拠が文書にある以上、テストが
+// 「索引が無いこと」を守り続ける意味は無い——守っているのは既に達成された
+// 前提条件であって、今後壊れうる不変条件ではない。
+//
+// 🔑 今後壊れうるのはこちらである: **索引の演算子クラスが検索の演算子と
+// 食い違うこと。** searcher.go は <#>（負の内積）で並べるので、索引は
+// vector_ip_ops でなければならない。vector_cosine_ops で張っても
+// CREATE INDEX は成功し、検索も正しい答えを返し、ただ索引が使われなくなる。
+// エラーが出ないので、症状は「なぜか速くならない」だけになる。
+// ⇒ テストは「無いこと」から「正しい形であること」へ移した (ADR 0022 Decision 2)。
+func TestSearchIndexesExistWithCorrectOperatorClass(t *testing.T) {
 	ts := newTestStore(t, newFakeEmbedder("fake:1024"))
 
-	const stmt = `SELECT count(*)
+	// indclass はその索引の列ごとの演算子クラス（oidvector）。どちらの索引も
+	// 単一列なので添字 0 を読む。
+	const stmt = `SELECT am.amname, opc.opcname
 	              FROM pg_index i
-	              JOIN pg_class c ON c.oid = i.indexrelid
-	              JOIN pg_am am   ON am.oid = c.relam
-	              WHERE am.amname IN ('hnsw', 'ivfflat')`
+	              JOIN pg_class c    ON c.oid = i.indexrelid
+	              JOIN pg_am am      ON am.oid = c.relam
+	              JOIN pg_opclass opc ON opc.oid = i.indclass[0]
+	              WHERE c.relname = $1`
 
-	var indexes int
-	if err := ts.db.QueryRowContext(t.Context(), stmt).Scan(&indexes); err != nil {
-		t.Fatalf("pg_index を読めない: %v", err)
+	cases := []struct {
+		index     string
+		wantAM    string
+		wantOpcls string
+	}{
+		{index: "chunks_embedding_hnsw", wantAM: "hnsw", wantOpcls: "vector_ip_ops"},
+		{index: "chunks_lexemes_gin", wantAM: "gin", wantOpcls: "tsvector_ops"},
 	}
 
-	if indexes != 0 {
-		t.Errorf("ベクトル索引が %d 個ある。ADR 0007 は実測前の索引作成を禁じている", indexes)
+	for _, c := range cases {
+		t.Run(c.index, func(t *testing.T) {
+			var accessMethod, opclass string
+
+			err := ts.db.QueryRowContext(t.Context(), stmt, c.index).Scan(&accessMethod, &opclass)
+			if err != nil {
+				t.Fatalf("索引 %s を pg_index から読めない: %v", c.index, err)
+			}
+
+			if accessMethod != c.wantAM {
+				t.Errorf("%s のアクセスメソッド = %q, want %q", c.index, accessMethod, c.wantAM)
+			}
+
+			if opclass != c.wantOpcls {
+				t.Errorf("%s の演算子クラス = %q, want %q（検索の演算子と食い違うと索引は黙って使われない）",
+					c.index, opclass, c.wantOpcls)
+			}
+		})
 	}
 }
 
@@ -104,7 +139,7 @@ func TestNewRejectsDimensionMismatch(t *testing.T) {
 	e := newFakeEmbedder("fake:768")
 	e.dims = 768
 
-	_, err := postgres.New(nil, e, newFakeTokenizer("fake-tokenizer:1"), postgres.FusionWeightedSum)
+	_, err := postgres.New(nil, storeOptions(defaultStoreSpec(e)))
 	if !errors.Is(err, postgres.ErrEmbedderDimensions()) {
 		t.Fatalf("次元 768 の Embedder が受け入れられた: %v", err)
 	}
@@ -114,8 +149,7 @@ func TestNewRejectsDimensionMismatch(t *testing.T) {
 //
 // 空のまま進むと embedder_id 列の CHECK 違反という分かりにくい形で落ちる。
 func TestNewRejectsEmptyEmbedderID(t *testing.T) {
-	_, err := postgres.New(nil, newFakeEmbedder(""), newFakeTokenizer("fake-tokenizer:1"),
-		postgres.FusionWeightedSum)
+	_, err := postgres.New(nil, storeOptions(defaultStoreSpec(newFakeEmbedder(""))))
 	if !errors.Is(err, postgres.ErrEmbedderID()) {
 		t.Fatalf("空の識別子が受け入れられた: %v", err)
 	}
@@ -126,7 +160,10 @@ func TestNewRejectsEmptyEmbedderID(t *testing.T) {
 // 🔴 nil の Tokenizer を持ったストアは、取り込みの瞬間に nil 参照で落ちる。
 // 設定の誤りは設定を読んだ直後に落とす、という Embedder 側と同じ扱いにする。
 func TestNewRejectsMissingTokenizer(t *testing.T) {
-	_, err := postgres.New(nil, newFakeEmbedder("fake:1024"), nil, postgres.FusionWeightedSum)
+	spec := defaultStoreSpec(newFakeEmbedder("fake:1024"))
+	spec.tokenizer = nil
+
+	_, err := postgres.New(nil, storeOptions(spec))
 	if !errors.Is(err, postgres.ErrTokenizerID()) {
 		t.Fatalf("nil の Tokenizer が受け入れられた: %v", err)
 	}
@@ -137,8 +174,10 @@ func TestNewRejectsMissingTokenizer(t *testing.T) {
 // 空のまま進むと tokenizer_id 列の CHECK 違反という分かりにくい形で落ちる。
 // embedder_id と同じ扱いである。
 func TestNewRejectsEmptyTokenizerID(t *testing.T) {
-	_, err := postgres.New(nil, newFakeEmbedder("fake:1024"), newFakeTokenizer(""),
-		postgres.FusionWeightedSum)
+	spec := defaultStoreSpec(newFakeEmbedder("fake:1024"))
+	spec.tokenizer = newFakeTokenizer("")
+
+	_, err := postgres.New(nil, storeOptions(spec))
 	if !errors.Is(err, postgres.ErrTokenizerID()) {
 		t.Fatalf("空の分割器識別子が受け入れられた: %v", err)
 	}
@@ -151,8 +190,10 @@ func TestNewRejectsEmptyTokenizerID(t *testing.T) {
 func TestNewRejectsUnknownFusion(t *testing.T) {
 	const outOfRange = postgres.Fusion(99)
 
-	_, err := postgres.New(nil, newFakeEmbedder("fake:1024"),
-		newFakeTokenizer("fake-tokenizer:1"), outOfRange)
+	spec := defaultStoreSpec(newFakeEmbedder("fake:1024"))
+	spec.fusion = outOfRange
+
+	_, err := postgres.New(nil, storeOptions(spec))
 	if !errors.Is(err, postgres.ErrUnknownFusion()) {
 		t.Fatalf("未知の融合方式が受け入れられた: %v", err)
 	}

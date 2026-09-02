@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/hideyukiMORI/nene-recall/internal/chunk"
 	"github.com/hideyukiMORI/nene-recall/internal/embed"
@@ -92,10 +93,13 @@ const tsRankNormalization = 0
 // 新しい誤差源だけが増える。要件定義 Q-1/Q-3 は語彙と合成の効果を測って決める
 // 未決事項であり、測定対象に説明のつかない誤差を混ぜない。
 //
-// 🔑 この選択は索引を入れる段階で必ず再検討が要る。HNSW を張った瞬間、
-// ORDER BY が合成値になっているこの SQL は索引を使えない（索引はベクトル距離
-// 単体でしか順序を作れない）。🔴 その判断は Phase 1 項目7 の ADR の仕事であって、
-// ここで先取りしない。先取りすると、測っていない前提で索引の設計を決めることになる。
+// 🔑 この選択は索引を入れる段階で必ず再検討が要る、と書いてあった。
+// その再検討が ADR 0022 である。HNSW を張っても ORDER BY が合成値である
+// この SQL は索引を使えないので、索引を効かせる経路は
+// candidateSelectionCTE（両側 top-K の和集合）として**別に**足した。
+// 🔴 この全探索の形は消さずに残す。索引の効果と候補生成の効果は分離できず、
+// 「索引を入れる前と同じ形」を測れる経路が無くなると before/after が読めなくなる
+// (docs/adr/0022-indexed-candidate-search.md Decision 3)。
 const candidatesCTE = `WITH candidates AS (
   SELECT id, external_id, document_id, source_id, chunk_index, content,
          page_number, section_label,
@@ -107,7 +111,71 @@ const candidatesCTE = `WITH candidates AS (
     AND (cardinality($4::bigint[]) = 0 OR source_id   = ANY ($4::bigint[]))
 )`
 
-// searchWeightedSumSQL は方式A（加重和）。$8 は alpha。
+// candidateSelectionCTE は「両側 top-K の和集合」を候補集合にする形。
+// $9 は K（RECALL_CANDIDATE_K）。判断の正本は ADR 0022 Decision 1。
+//
+// 🔑 candidatesCTE と**同じ名前・同じ列**の candidates を最後に作る。だから
+// 合成の SQL（下の2つの tail）は候補の作り方を1行も知らずに済む。合成の式が
+// 経路ごとに分岐すると、「モードを変えたら合成も変わっていた」という交絡が
+// 入り、after の実測で候補生成だけの効果を読めなくなる。
+//
+// 4段の意味:
+//
+//	vec           … ベクトル側 top-K。ORDER BY が距離そのものなので
+//	                HNSW (vector_ip_ops) が効く形になっている
+//	lex           … 語彙側 top-K。@@ が GIN で絞ってから ts_rank を計算する。
+//	                トークンが 0 個なら to_tsquery は空の tsquery を返し、
+//	                @@ が false になるので lex は空集合になる（エラーにしない）
+//	candidate_ids … 上2つの**和集合**。片側だけにすると、語彙でしか当たらない
+//	                文書（exact-term の識別子）が候補に入らず、ADR 0014 が
+//	                測った利得を捨てることになる（ADR 0022 の却下表）
+//	candidates    … 候補行に**両方の**スコアを付け直す。@@ に当たらなかった行の
+//	                ts_rank は 0 になる
+//
+// 🔴 org_id の WHERE は vec と lex の**両方**に入れる。候補生成の段で別 org が
+// 混ざると、後段で弾いたとしても「別テナントの文書を読んだ」ことになる。
+// 分離は方式や経路の選択とは独立に成り立っていなければならない (ADR 0003)。
+// filters（document_ids / source_ids）も同じ理由で両方に入れる——片側だけに
+// 書くと、絞り込んだはずの文書が候補に居座り、候補枠を食い潰す。
+//
+// 🔴 SELECT * を書かない（GO-015）。
+// 🔴 演算子は <#>（負の内積）。索引の演算子クラス vector_ip_ops と対になって
+// いなければ索引は**黙って使われない**（migrations/0004_add_search_indexes.sql）。
+//
+// ⚠️ vec と lex には LIMIT があるので、PostgreSQL はこの2つを CTE として
+// 実体化する（インライン展開しない）。それが狙いである——展開されると
+// 「まず K 件に絞る」という形そのものが消える。
+const candidateSelectionCTE = `WITH vec AS (
+  SELECT id
+  FROM chunks
+  WHERE org_id = $1
+    AND (cardinality($3::bigint[]) = 0 OR document_id = ANY ($3::bigint[]))
+    AND (cardinality($4::bigint[]) = 0 OR source_id   = ANY ($4::bigint[]))
+  ORDER BY embedding <#> $2::vector
+  LIMIT $9
+), lex AS (
+  SELECT id
+  FROM chunks
+  WHERE org_id = $1
+    AND (cardinality($3::bigint[]) = 0 OR document_id = ANY ($3::bigint[]))
+    AND (cardinality($4::bigint[]) = 0 OR source_id   = ANY ($4::bigint[]))
+    AND lexemes @@ to_tsquery('simple', $6)
+  ORDER BY ts_rank(lexemes, to_tsquery('simple', $6), $7) DESC
+  LIMIT $9
+), candidate_ids AS (
+  SELECT id FROM vec
+  UNION
+  SELECT id FROM lex
+), candidates AS (
+  SELECT c.id, c.external_id, c.document_id, c.source_id, c.chunk_index, c.content,
+         c.page_number, c.section_label,
+         -(c.embedding <#> $2::vector) AS vector_score,
+         ts_rank(c.lexemes, to_tsquery('simple', $6), $7) AS lexical_score
+  FROM chunks c
+  JOIN candidate_ids ON candidate_ids.id = c.id
+)`
+
+// weightedSumTail は方式A（加重和）の本体。$8 は alpha。
 //
 // 🔴 lexical_score をクエリ内の最大値で割ってから合成する。割らないと加重和は
 // 機能しない——2026-09-02 の実測で lexical は中央値 0.00016、vector は中央値
@@ -124,7 +192,12 @@ const candidatesCTE = `WITH candidates AS (
 // 縮退する。エラーにはしない——語彙が当たらないのは正常な検索結果である。
 //
 // ⚠️ 返す lexical_score は正規化前の生の値である（下の scannedRow の説明を参照）。
-const searchWeightedSumSQL = candidatesCTE + `
+//
+// 🔑 「クエリ内の最大値」の意味は候補の作り方で変わる。exhaustive では org 内の
+// 全行の最大値、candidates では候補集合内の最大値である。⇒ 同じ alpha でも
+// 効き方が違う。ADR 0022 が「alpha の再測定が要る」と書いているのはこの1行の
+// ためである (ADR 0015 Decision 3)。
+const weightedSumTail = `
 SELECT id, external_id, document_id, source_id, chunk_index, content,
        page_number, section_label,
        vector_score, lexical_score,
@@ -135,7 +208,13 @@ FROM candidates
 ORDER BY score DESC, id
 LIMIT $5`
 
-// searchRRFSQL は方式B（順位融合）。$8 は RRF の平滑化定数 k。
+// searchWeightedSumSQL は全探索 × 加重和。
+const searchWeightedSumSQL = candidatesCTE + weightedSumTail
+
+// searchCandidateWeightedSumSQL は候補生成 × 加重和。
+const searchCandidateWeightedSumSQL = candidateSelectionCTE + weightedSumTail
+
+// rrfTail は方式B（順位融合）の本体。$8 は RRF の平滑化定数 k。
 //
 // 🔑 スコアの値ではなく順位だけを使うので、ベクトルと語彙のスケールが
 // 3桁違っても原理的に問題にならない。方式A が正規化で解いている問題を、
@@ -156,7 +235,13 @@ LIMIT $5`
 //
 // float8 に明示的に寄せているのは、1.0 / bigint が numeric になるのを避ける
 // ため。numeric はドライバの走査先が float64 と噛み合わない。
-const searchRRFSQL = candidatesCTE + `, ranked AS (
+//
+// 🔑 候補モードでは順位が**候補集合の中**で振られる。上の「全行に順位を振って
+// いる」という但し書きは exhaustive のときの話で、candidates では 2K 行以下に
+// なる——古典的な RRF（両側の上位 N を融合する）に一段近づく形である。
+// ADR 0015 が「候補集合を絞る構成では RRF の評価が変わりうる」と留保したのは
+// この違いであり、どちらが良いかは after のレーンが測る (ADR 0022 の却下表)。
+const rrfTail = `, ranked AS (
   SELECT id, external_id, document_id, source_id, chunk_index, content,
          page_number, section_label, vector_score, lexical_score,
          RANK() OVER (ORDER BY vector_score  DESC) AS vector_rank,
@@ -171,6 +256,15 @@ SELECT id, external_id, document_id, source_id, chunk_index, content,
 FROM ranked
 ORDER BY score DESC, id
 LIMIT $5`
+
+// searchRRFSQL は全探索 × 順位融合。
+const searchRRFSQL = candidatesCTE + rrfTail
+
+// searchCandidateRRFSQL は候補生成 × 順位融合。
+//
+// 🔴 組み合わせを1つ落とさない。candidates × rrf が動かないと、ADR 0015 の
+// 留保を after で測れなくなる (ADR 0022 Decision 1)。
+const searchCandidateRRFSQL = candidateSelectionCTE + rrfTail
 
 // 🔴 どちらの方式も ORDER BY に id の副キーを置く。同点の並びが実行のたびに
 // 揺れると、alpha = 1.0 が純ベクトルと一致することの検証が「たまたま一致した／
@@ -331,7 +425,133 @@ func (s *Store) encodeQueryText(ctx context.Context, text string) (string, error
 	return encodeVector(vectors[0]), nil
 }
 
+// searchPlan は実行する SQL と、その引数。
+//
+// 🔑 引数の本数が候補の作り方で変わる（candidates だけが $9 = K を使う）ので、
+// 文と引数を1つの値にして持ち運ぶ。別々に返すと、片方だけモードを見て
+// もう片方が見ていない、という食い違いが書けてしまう。PostgreSQL は
+// 「参照されない引数」を型解決できずに Parse で落ちるため、余分に渡すこともできない。
+type searchPlan struct {
+	statement string
+	args      []any
+}
+
+// rowQueryer は *sql.DB と *sql.Tx が共通して持つ複数行の問い合わせ口。
+//
+// 候補モードは hnsw.ef_search を SET LOCAL するためにトランザクションの内側で
+// 走り、全探索はプールから直接走る。同じ走査コードを両方から呼ぶために要る。
+// database/sql はこの共通部分を型として提供していないので、必要な1メソッドだけを
+// 自前で宣言する（queryer と同じ流儀）。
+type rowQueryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
 // searchRows は SQL を実行して結果を組み立てる。
+//
+// 🔴 全探索の経路にトランザクションを足していない。候補モードだけが
+// SET LOCAL を要するのであって、両方を揃えると before/after の「before 側」に
+// BEGIN/COMMIT の往復が1回ぶん増える。索引を入れる前後で測るものを変えない
+// (docs/adr/0022-indexed-candidate-search.md Decision 3・CLAUDE.md 地雷10)。
+func (s *Store) searchRows(ctx context.Context, q index.Query, vector string) ([]index.Result, error) {
+	plan, err := s.searchPlan(q, vector)
+	if err != nil {
+		return nil, err
+	}
+
+	if s.searchMode == SearchModeCandidates {
+		return s.searchWithinTx(ctx, q, plan)
+	}
+
+	return queryResults(ctx, s.db, q, plan)
+}
+
+// searchPlan は文と引数を組み立てる。DB には触れない。
+func (s *Store) searchPlan(q index.Query, vector string) (searchPlan, error) {
+	expression, err := s.lexicalExpression(q.Text)
+	if err != nil {
+		return searchPlan{}, err
+	}
+
+	statement, fusionArg, err := s.fusion.statement(s.searchMode, q.Alpha)
+	if err != nil {
+		return searchPlan{}, err
+	}
+
+	args := []any{
+		q.OrgID.Int64(), vector,
+		encodeInt64Array(q.DocumentIDs), encodeInt64Array(q.SourceIDs),
+		q.Limit, expression, tsRankNormalization, fusionArg,
+	}
+
+	// $9 は候補モードの SQL にしか現れない。無条件に渡すと、全探索の側が
+	// 「9個渡されたが8個しか要らない」で Parse に失敗する。
+	if s.searchMode == SearchModeCandidates {
+		args = append(args, s.candidateK)
+	}
+
+	return searchPlan{statement: statement, args: args}, nil
+}
+
+// searchWithinTx は hnsw.ef_search を効かせたトランザクションの中で検索する。
+//
+// 🔴 SET LOCAL はトランザクション期間の設定である。プールから直接 SET すると
+// 「その接続だけが設定を持ち越す」状態になり、次にその接続を掴んだ検索が
+// 別の ef_search で走る。どの検索がどの探索幅で走ったかが分からなくなれば、
+// 計測の条件は決まらない (ADR 0022 Decision 4)。
+//
+// 読み取りしかしないが COMMIT する。ROLLBACK で閉じると、失敗していないのに
+// 失敗として記録される（統計・ログ）ので、正常終了は正常終了として閉じる。
+func (s *Store) searchWithinTx(
+	ctx context.Context, q index.Query, plan searchPlan,
+) ([]index.Result, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: begin: %s", errSearch, err.Error())
+	}
+
+	results, err := s.searchWithEfSearch(ctx, tx, q, plan)
+	if err != nil {
+		// 巻き戻しの失敗も握り潰さない（errors.Join は nil を落とす）。
+		return nil, errors.Join(err, tx.Rollback())
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("%w: commit: %s", errSearch, err.Error())
+	}
+
+	return results, nil
+}
+
+// searchWithEfSearch は探索幅を設定してから検索を走らせる。
+func (s *Store) searchWithEfSearch(
+	ctx context.Context, tx *sql.Tx, q index.Query, plan searchPlan,
+) ([]index.Result, error) {
+	if err := s.setEfSearch(ctx, tx); err != nil {
+		return nil, err
+	}
+
+	return queryResults(ctx, tx, q, plan)
+}
+
+// setEfSearch はトランザクション期間だけ hnsw.ef_search を上書きする。
+//
+// 🔴 set_config(..., true) は SET LOCAL と同じ意味である。SET 文を使わないのは、
+// 設定値をプレースホルダで渡せないためである——文字列連結で組み立てると、
+// 数値であることを型ではなく検査で保証することになる。
+//
+// 🔴 GUC の名前をここ1箇所にしか書かない。綴りを誤ると PostgreSQL は
+// 「未知の設定」でエラーにするが、2箇所に書けば片方だけ直す経路ができる。
+func (s *Store) setEfSearch(ctx context.Context, tx *sql.Tx) error {
+	const setEfSearch = `SELECT set_config('hnsw.ef_search', $1, true)`
+
+	if _, err := tx.ExecContext(ctx, setEfSearch, strconv.Itoa(s.efSearch)); err != nil {
+		return fmt.Errorf("%w: set hnsw.ef_search: %s", errSearch, err.Error())
+	}
+
+	return nil
+}
+
+// queryResults は文を実行し、全行を結果へ組み替える。
 //
 // 🔴 名前付き戻り値を使っているのは、有効な3つの linter が同時に成り立つ書き方が
 // ここだけ存在しないためである。実測した衝突:
@@ -347,21 +567,10 @@ func (s *Store) encodeQueryText(ctx context.Context, text string) (string, error
 // 守るためである。裸の return は書かない（GO-004 が本当に禁じているのはそれ）。
 //
 //nolint:nonamedreturns // defer から Close の失敗を返り値へ合流させる唯一の手段。sqlclosecheck が defer を、errcheck が戻り値の検査を要求するため、この3つを同時に満たす書き方が他に無い
-func (s *Store) searchRows(ctx context.Context, q index.Query, vector string) (results []index.Result, err error) {
-	expression, err := s.lexicalExpression(q.Text)
-	if err != nil {
-		return nil, err
-	}
-
-	statement, fusionArg, err := s.fusion.statement(q.Alpha)
-	if err != nil {
-		return nil, err
-	}
-
-	rows, err := s.db.QueryContext(ctx, statement,
-		q.OrgID.Int64(), vector,
-		encodeInt64Array(q.DocumentIDs), encodeInt64Array(q.SourceIDs),
-		q.Limit, expression, tsRankNormalization, fusionArg)
+func queryResults(
+	ctx context.Context, db rowQueryer, q index.Query, plan searchPlan,
+) (results []index.Result, err error) {
+	rows, err := db.QueryContext(ctx, plan.statement, plan.args...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: query: %s", errSearch, err.Error())
 	}

@@ -32,11 +32,10 @@ func allFusions() []postgres.Fusion {
 func fusedStore(t *testing.T, e *fakeEmbedder, fusion postgres.Fusion) *testStore {
 	t.Helper()
 
-	return newTestStoreWith(t, storeSpec{
-		embedder:  e,
-		tokenizer: newFakeTokenizer("fake-tokenizer:1"),
-		fusion:    fusion,
-	})
+	spec := defaultStoreSpec(e)
+	spec.fusion = fusion
+
+	return newTestStoreWith(t, spec)
 }
 
 // TestFusionRoundTripsThroughItsName は名前と値が往復することを確かめる。
@@ -416,11 +415,10 @@ func TestFusionsProduceDifferentScoreScales(t *testing.T) {
 	orgA := mustOrgID(t, 1)
 	putHybridChunks(t, weighted, orgA)
 
-	rrf := attachStoreWith(t, storeSpec{
-		embedder:  e,
-		tokenizer: newFakeTokenizer("fake-tokenizer:1"),
-		fusion:    postgres.FusionRRF,
-	})
+	rrfSpec := defaultStoreSpec(e)
+	rrfSpec.fusion = postgres.FusionRRF
+
+	rrf := attachStoreWith(t, rrfSpec)
 
 	query := newQuery(querySpec{
 		orgID: orgA, text: "recall_store", limit: 10, alpha: 0.7,
@@ -525,9 +523,35 @@ func assertSameRanking(t *testing.T, left, right []index.Result) {
 func TestStatementRejectsUnknownFusion(t *testing.T) {
 	t.Parallel()
 
-	if _, _, err := postgres.StatementFor(postgres.Fusion(99), 0.7); !errors.Is(
-		err, postgres.ErrUnknownFusion()) {
-		t.Fatalf("err = %v, want errUnknownFusion", err)
+	modes := map[string]postgres.SearchMode{
+		"exhaustive": postgres.SearchModeExhaustive,
+		"candidates": postgres.SearchModeCandidates,
+	}
+
+	// 🔴 どちらの候補の作り方でも番人が働くこと。片方だけ検査すると、
+	// 経路を1本足したときに番人の無い経路が生まれる。
+	for name, mode := range modes {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, _, err := postgres.StatementFor(mode, postgres.Fusion(99), 0.7); !errors.Is(
+				err, postgres.ErrUnknownFusion()) {
+				t.Fatalf("err = %v, want errUnknownFusion", err)
+			}
+		})
+	}
+}
+
+// TestStatementRejectsUnknownSearchMode は候補の作り方の番人が働くことを見る。
+//
+// SearchMode も int なので、範囲外の値を作ること自体は言語仕様上いつでもできる
+// (GO-003)。New が構築時に弾くが、実行経路にも番人を置く。
+func TestStatementRejectsUnknownSearchMode(t *testing.T) {
+	t.Parallel()
+
+	_, _, err := postgres.StatementFor(postgres.SearchMode(99), postgres.FusionWeightedSum, 0.7)
+	if !errors.Is(err, postgres.ErrUnknownSearchMode()) {
+		t.Fatalf("err = %v, want errUnknownSearchMode", err)
 	}
 }
 
@@ -538,12 +562,14 @@ func TestStatementRejectsUnknownFusion(t *testing.T) {
 func TestEachFusionHasItsOwnStatement(t *testing.T) {
 	t.Parallel()
 
-	weighted, weightedArg, err := postgres.StatementFor(postgres.FusionWeightedSum, 0.7)
+	weighted, weightedArg, err := postgres.StatementFor(
+		postgres.SearchModeExhaustive, postgres.FusionWeightedSum, 0.7)
 	if err != nil {
 		t.Fatalf("StatementFor(weighted-sum): %v", err)
 	}
 
-	rrf, rrfArg, err := postgres.StatementFor(postgres.FusionRRF, 0.7)
+	rrf, rrfArg, err := postgres.StatementFor(
+		postgres.SearchModeExhaustive, postgres.FusionRRF, 0.7)
 	if err != nil {
 		t.Fatalf("StatementFor(rrf): %v", err)
 	}
@@ -552,6 +578,12 @@ func TestEachFusionHasItsOwnStatement(t *testing.T) {
 		t.Errorf("2つの方式が同じ SQL を返している")
 	}
 
+	// 🔴 候補の作り方でも SQL が変わること。4通り（2方式 × 2モード）が
+	// すべて別の SQL でなければ、どこかの組み合わせが別の組み合わせの
+	// 数字を出す。ADR 0015 の留保を after で測るには candidates × rrf が
+	// 独立に存在していなければならない (ADR 0022 Decision 1)。
+	assertDistinctStatements(t)
+
 	// 🔴 $8 の中身も方式ごとに違う。加重和は alpha、RRF は k である。
 	if weightedArg != float32(0.7) {
 		t.Errorf("加重和の $8 = %v, want alpha 0.7", weightedArg)
@@ -559,5 +591,33 @@ func TestEachFusionHasItsOwnStatement(t *testing.T) {
 
 	if rrfArg != postgres.RRFK {
 		t.Errorf("RRF の $8 = %v, want k %d", rrfArg, postgres.RRFK)
+	}
+}
+
+// assertDistinctStatements は 2方式 × 2モードの4通りが互いに違う SQL を返すことを見る。
+func assertDistinctStatements(t *testing.T) {
+	t.Helper()
+
+	seen := map[string]string{}
+
+	for _, mode := range []postgres.SearchMode{
+		postgres.SearchModeExhaustive, postgres.SearchModeCandidates,
+	} {
+		for _, fusion := range []postgres.Fusion{
+			postgres.FusionWeightedSum, postgres.FusionRRF,
+		} {
+			label := mode.String() + " x " + fusion.String()
+
+			statement, _, err := postgres.StatementFor(mode, fusion, 0.7)
+			if err != nil {
+				t.Fatalf("StatementFor(%s): %v", label, err)
+			}
+
+			if other, dup := seen[statement]; dup {
+				t.Errorf("%s と %s が同じ SQL を返している", label, other)
+			}
+
+			seen[statement] = label
+		}
 	}
 }

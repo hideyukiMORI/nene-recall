@@ -51,11 +51,7 @@ func TestPutRejectsMismatchedTokenizer(t *testing.T) {
 
 	putOne(t, ts, orgA, "先に入れた本文")
 
-	other := attachStoreWith(t, storeSpec{
-		embedder:  newFakeEmbedder("fake:1024"),
-		tokenizer: newFakeTokenizer("fake-tokenizer:2"),
-		fusion:    postgres.FusionWeightedSum,
-	})
+	other := attachStoreWith(t, tokenizedSpec(newFakeTokenizer("fake-tokenizer:2")))
 
 	_, err := other.Put(t.Context(), orgA, threeChunks(t))
 	if !errors.Is(err, index.ErrTokenizerMismatch) {
@@ -73,11 +69,7 @@ func TestSearchRejectsMismatchedTokenizer(t *testing.T) {
 
 	putOne(t, ts, orgA, "先に入れた本文")
 
-	other := attachStoreWith(t, storeSpec{
-		embedder:  newFakeEmbedder("fake:1024"),
-		tokenizer: newFakeTokenizer("fake-tokenizer:2"),
-		fusion:    postgres.FusionWeightedSum,
-	})
+	other := attachStoreWith(t, tokenizedSpec(newFakeTokenizer("fake-tokenizer:2")))
 
 	_, err := other.Search(t.Context(), index.Query{
 		OrgID: orgA, Text: "本文", Limit: 10, Alpha: 0.7,
@@ -101,11 +93,10 @@ func TestEmbedderMismatchIsReportedBeforeTokenizerMismatch(t *testing.T) {
 
 	putOne(t, ts, orgA, "先に入れた本文")
 
-	other := attachStoreWith(t, storeSpec{
-		embedder:  newFakeEmbedder("fake-b:1024"),
-		tokenizer: newFakeTokenizer("fake-tokenizer:2"),
-		fusion:    postgres.FusionWeightedSum,
-	})
+	otherSpec := tokenizedSpec(newFakeTokenizer("fake-tokenizer:2"))
+	otherSpec.embedder = newFakeEmbedder("fake-b:1024")
+
+	other := attachStoreWith(t, otherSpec)
 
 	_, err := other.Put(t.Context(), orgA, threeChunks(t))
 	if !errors.Is(err, index.ErrEmbedderMismatch) {
@@ -138,11 +129,7 @@ func TestPutRejectsTokensThatBreakTheContract(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ts := newTestStoreWith(t, storeSpec{
-				embedder:  newFakeEmbedder("fake:1024"),
-				tokenizer: brokenTokenizer{tokens: tc.tokens},
-				fusion:    postgres.FusionWeightedSum,
-			})
+			ts := newTestStoreWith(t, tokenizedSpec(brokenTokenizer{tokens: tc.tokens}))
 			orgA := mustOrgID(t, 1)
 
 			_, err := ts.store.Put(t.Context(), orgA, threeChunks(t))

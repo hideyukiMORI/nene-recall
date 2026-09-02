@@ -165,6 +165,9 @@ func baseConfig() config.Config {
 		VoyageAPIKey:    "",
 		APIToken:        "",
 		DefaultAlpha:    0.8,
+		SearchMode:      config.SearchModeExhaustive,
+		CandidateK:      100,
+		HNSWEfSearch:    40,
 	}
 }
 

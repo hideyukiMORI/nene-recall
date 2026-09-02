@@ -28,7 +28,7 @@ make eval EVAL_LABEL=baseline GPU_NOTE="他アプリが 5.7GB 使用中"
 | --- | --- |
 | 環境 | git revision / 未コミット変更の有無・Go 版・`embedder_id`・**Ollama の版とモデル digest**・PostgreSQL と pgvector の版・**SQLite の版**・GPU 占有の自己申告 |
 | 入力の同一性 | 3ファイルの **sha256** と件数 |
-| 条件 | `alpha`（10進・v4 から `float64`）・`limit`・`rounds`・ウォームアップ周回数・`k` 値・**パーセンタイルの定義**・**順位付けの条件**（`ranking`: **バックエンド**・**語彙採点関数**・**分割器の識別子**・融合方式、および postgres でのみ `ts_rank` の正規化フラグと RRF の `k`） |
+| 条件 | `alpha`（10進・v4 から `float64`）・`limit`・`rounds`・ウォームアップ周回数・`k` 値・**パーセンタイルの定義**・**順位付けの条件**（`ranking`: **バックエンド**・**語彙採点関数**・**分割器の識別子**・融合方式・**候補の作り方**、および postgres でのみ `ts_rank` の正規化フラグと RRF の `k`、候補モードでのみ `candidate_k` と `ef_search`） |
 | per-query の生データ | 上位の並び（`eval_key` と**3つのスコア**）・正解ごとの順位（圏外は `null`）・ラウンドごとの latency 2系統 |
 | 集計値 | `recall@1/5/10`・`MRR`・p50/p95（2系統）・タグ別 `recall`・**micro 内訳**・**gold 長さ別の内訳**・**名指しの長文チャンクの追跡** |
 
@@ -45,6 +45,7 @@ make eval EVAL_LABEL=baseline GPU_NOTE="他アプリが 5.7GB 使用中"
 | `nene-recall/eval-report/v4` | 2026-09-02 | `conditions` をストア非依存で正確にした |
 | `nene-recall/eval-report/v5` | 2026-09-02 | 分割器を条件に記録した（形態素の導入・ADR 0018） |
 | `nene-recall/eval-report/v6` | 2026-09-02 | 紛れ込みと埋め込みキャッシュを条件に記録した（10万件規模・ADR 0019） |
+| `nene-recall/eval-report/v7` | 2026-09-02 | 候補の作り方を条件に記録した（索引つきの候補生成・ADR 0022） |
 
 v2 で変えたのは3点。
 
@@ -217,3 +218,47 @@ v5 以前のレポートは、**259 チャンクだけで測った数字**とし
 クエリ側の埋め込みはキャッシュしないので（ADR 0019 Decision 3）、
 **2系統の latency はどちらもキャッシュの影響を受けない。**
 影響を受けるのは計測前の取り込み時間だけである。
+
+---
+
+## v7 — 候補の作り方を条件に記録した（ADR 0022）
+
+v7 で増えたのは `conditions.ranking` の3項目である。
+
+| 項目 | 出る条件 | 意味 |
+| --- | --- | --- |
+| `search_mode` | postgres で測ったとき | `exhaustive`（全行にスコアを付けて並べる）か `candidates`（両側 top-K の和集合だけを見る） |
+| `candidate_k` | `search_mode: candidates` のときだけ | 両側それぞれで取る件数 |
+| `ef_search` | `search_mode: candidates` のときだけ | HNSW の探索幅（`hnsw.ef_search`） |
+
+🔴 **`recall` の差を「索引を入れたから」と読まないこと。** 索引（HNSW / GIN）は
+migration 0004 で**常に**張られており、`search_mode: exhaustive` の SQL は
+索引が張られていても索引を使わない（`ORDER BY` が `alpha*vector + (1-alpha)*lexical`
+という合成式で、どの索引の順序でもないため）。⇒ 2つのレポートの差には
+**「索引の効果」と「候補生成の効果」が分離できない形で混ざる**
+（[ADR 0022](../../adr/0022-indexed-candidate-search.md) Decision 3）。
+
+🔴 **`alpha` を条件をまたいで比べないこと。** 加重和は語彙スコアを
+「クエリ内の最大値」で割ってから合成するが、その最大値の母集団が
+`exhaustive` では org 内の全行、`candidates` では候補集合（≤ 2K 行）になる。
+**同じ `alpha` が別の効き方をする。** 既定 0.8 は `exhaustive` で掃引した値である
+（ADR 0015 Decision 3・ADR 0022 Consequences）。
+
+⚠️ `candidate_k` の既定 100 と `ef_search` の既定 40 は**掃引して選んだ値ではない**。
+ADR 0022 が「まず動かして測る」ために置いた値で、`ef_search` は pgvector の既定である。
+（既定のままでは K=100 > ef=40 なので、`-mode candidates` を使うときは
+`-ef-search` を K 以上に上げる必要がある。起動時・構築時に拒否される。）
+
+```bash
+# 索引を効かせる候補生成で測る（DB 名を分けて他レーンの recall_eval を壊さない）
+make eval EVAL_LABEL=candidates \
+  EVAL_MODE=candidates EVAL_CANDIDATE_K=100 EVAL_EF_SEARCH=100 \
+  EVAL_DB_NAME=recall_eval_lane17
+```
+
+### v6 以前のレポートを読むときの注意
+
+`conditions.ranking.search_mode` が無いレポートは **`exhaustive` 相当**で測られている
+（候補モードは v7 と同時に実装された）。ただし当時は**索引そのものが存在しなかった**ので、
+「索引はあるが使わなかった」v7 の `exhaustive` とは、**書き込み側のコスト**が違う。
+検索の p95 と `recall` は比較できる。

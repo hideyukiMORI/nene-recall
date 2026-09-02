@@ -317,6 +317,9 @@ func testReportRanking() eval.RankingSettings {
 		Fusion: "weighted-sum", Store: "postgres", LexicalScorer: "ts_rank",
 		TokenizerID:         "bigram:nfkc-lower:v1",
 		TsRankNormalization: intPtr(0), RRFK: intPtr(60),
+		// 候補モードのつまみは指さない。全探索には K も探索幅も存在せず、
+		// 値を書けば「その条件で測った」と読まれる (様式 v7)。
+		SearchMode: strPtr("exhaustive"), CandidateK: nil, EfSearch: nil,
 	}
 }
 
@@ -326,6 +329,10 @@ func testSQLiteRanking() eval.RankingSettings {
 		Fusion: "weighted-sum", Store: "sqlite", LexicalScorer: "fts5-bm25",
 		TokenizerID:         "bigram:nfkc-lower:v1",
 		TsRankNormalization: nil, RRFK: nil,
+		// 🔴 SearchMode も nil である。SQLite に候補の作り方という概念が無い
+		// ので、"exhaustive" と書くと「2つのうち片方を選んだ」と読める
+		// (ADR 0022 Decision 5)。
+		SearchMode: nil, CandidateK: nil, EfSearch: nil,
 	}
 }
 
@@ -334,6 +341,9 @@ func testSQLiteRanking() eval.RankingSettings {
 // ポインタなのは nil（そのストアにそのつまみが無い）と 0（0 で測った）を
 // 区別するためなので、テスト側にも同じ区別が要る。
 func intPtr(v int) *int { return &v }
+
+// strPtr は「値がある」ことを表す文字列ポインタを作る。intPtr と同じ理由で要る。
+func strPtr(v string) *string { return &v }
 
 // testReportInputs はレポートの検査に使う入力の同一性。
 func testReportInputs() eval.Inputs {

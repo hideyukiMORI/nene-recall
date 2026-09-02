@@ -59,6 +59,10 @@ CREATE INDEX chunks_embedder_idx ON chunks (embedder_id);
 
 -- 🔴🔴 embedding 列にベクトル索引（HNSW / IVFFlat）を作らないこと。
 --
+-- ⚠️ この禁止は 0004_add_search_indexes.sql で**解けている**（2026-09-02）。
+--    下の手順 2（10万件で測る）が docs/benchmarks/2026-09-02-eval-100k-before-index.md
+--    で終わり、手順 3 として HNSW を張った。以下は当時の記録として残す。
+--
 -- ADR 0007 の成果物は「pgvector を選んだこと」ではなく
 -- 「測ってから索引を入れた経路」である。最初から索引を張ると before の数字が
 -- 取れず、なぜ索引を入れたのかを数字で語れなくなる。ADR 0007 が定めた手順は

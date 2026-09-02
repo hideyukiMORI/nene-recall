@@ -41,6 +41,9 @@ func newE2EServer(t *testing.T, ts *testStore) http.Handler {
 		VoyageAPIKey:    "",
 		APIToken:        "",
 		DefaultAlpha:    1,
+		SearchMode:      config.SearchModeExhaustive,
+		CandidateK:      100,
+		HNSWEfSearch:    40,
 	}
 
 	srv, err := httpapi.New(cfg, slog.New(slog.DiscardHandler), httpapi.Dependencies{

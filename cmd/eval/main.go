@@ -58,11 +58,28 @@ import (
 //
 // 環境変数から読まないのは main_test.go と同じ理由である。ローカルと CI が
 // 同じ DSN で同じものを見ることを、env で分岐できる余地ごと無くしておく。
+//
+// 🔴 可変なのは**DB 名だけ**である（-eval-db）。ホスト・ポート・認証情報は
+// 定数のままで、別の Postgres を向ける口は開けない。DB 名を可変にしたのは、
+// 複数のレーンが同じ Postgres に対して同時に計測するとき、共有の recall_eval を
+// 互いに DROP して壊し合うためである。
 const (
-	adminDSN   = "postgres://recall:recall@localhost:5433/recall?sslmode=disable"
-	evalDSN    = "postgres://recall:recall@localhost:5433/recall_eval?sslmode=disable"
-	evalDBName = "recall_eval"
+	dsnHead = "postgres://recall:recall@localhost:5433/"
+	dsnTail = "?sslmode=disable"
+
+	adminDSN = dsnHead + "recall" + dsnTail
+
+	// defaultEvalDBName は -eval-db の既定値であり、許される名前の接頭辞でもある。
+	defaultEvalDBName = "recall_eval"
 )
+
+// evalDSN は評価用 DB への接続文字列を組み立てる。
+//
+// 🔴 名前は validateEvalDBName を通ったものだけを渡すこと。DB 名は識別子なので
+// プレースホルダにできず、ここは文字列連結になる。
+func evalDSN(dbName string) string {
+	return dsnHead + dbName + dsnTail
+}
 
 // defaultSQLitePath は -store sqlite のときの既定のファイル。
 //
@@ -128,6 +145,13 @@ var (
 	// 🔴 errUnknownStore と同じ理由で既定へ倒さない。綴り誤りが「bigram で
 	// 測った」結果として記録されると、ADR 0018 の比較そのものが無意味になる。
 	errUnknownTokenizer = errors.New("eval: unknown tokenizer")
+	// errEvalDBName は -eval-db に使えない名前が渡されたことを表す。
+	//
+	// 🔴 このコマンドは指定された DB を **DROP してから CREATE する**。名前を
+	// 自由にすると「任意の DB を消せる口」になる。recall_eval で始まり
+	// [a-z0-9_] だけが続く名前に限り、開発用の recall・テスト用の
+	// recall_test_<pid>・無関係な DB には触れられないようにする。
+	errEvalDBName = errors.New("eval: the evaluation database name is not allowed")
 )
 
 // storeNames は -store に指定できる名前。
@@ -241,7 +265,20 @@ type flags struct {
 	distractors string
 	// embedCache は埋め込みを貯めるディレクトリ。空なら貯めない。
 	embedCache string
-	gpuNote    string
+	// mode は候補集合の作り方。
+	//
+	// 🔴 生の文字列で持つ。postgres.ParseSearchMode を通るまでは検証されて
+	// いない入力であり、rawOrg・fusion・store と同じ扱いである。
+	mode string
+	// candidateK / efSearch は -mode candidates のときの条件。
+	candidateK int
+	efSearch   int
+	// evalDB は作り直す評価用 DB の名前。
+	//
+	// 🔴 このコマンドは指定された DB を DROP する。名前は
+	// validateEvalDBName が recall_eval で始まるものだけに絞る。
+	evalDB  string
+	gpuNote string
 }
 
 // distractorSet は投入する紛れ込みと、その同一性の記録。
@@ -391,6 +428,16 @@ func parseFlags() (flags, error) {
 	flag.StringVar(&opts.embedCache, "embed-cache", "",
 		"埋め込みを貯めるディレクトリ（省略可・ADR 0019）。"+
 			"クエリ側はキャッシュしないので系統1 の latency は変わらない")
+	flag.StringVar(&opts.mode, "mode", postgres.SearchModeExhaustive.String(),
+		"候補集合の作り方: "+strings.Join(postgres.SearchModeNames(), " | ")+
+			"（既定は全探索。candidates は索引を効かせる計測モード・ADR 0022。postgres でのみ指定できる）")
+	flag.IntVar(&opts.candidateK, "candidate-k", postgres.DefaultCandidateK,
+		"-mode candidates のときの両側 top-K（既定 100 に根拠は無い・ADR 0022）")
+	flag.IntVar(&opts.efSearch, "ef-search", postgres.DefaultEfSearch,
+		"-mode candidates のときの hnsw.ef_search（既定 40 は pgvector の既定。K 以上であること）")
+	flag.StringVar(&opts.evalDB, "eval-db", defaultEvalDBName,
+		"作り直す評価用 DB の名前（"+defaultEvalDBName+" で始まること）。"+
+			"複数のレーンが同時に測るとき、共有の "+defaultEvalDBName+" を壊し合わないために分ける")
 	flag.StringVar(&opts.gpuNote, "gpu-note", "",
 		"GPU の占有状況などの自己申告。レポートにそのまま載る")
 	flag.Parse()
@@ -399,7 +446,38 @@ func parseFlags() (flags, error) {
 		return flags{}, fmt.Errorf("%w: -out is required", errFlags)
 	}
 
+	if err := validateEvalDBName(opts.evalDB); err != nil {
+		return flags{}, err
+	}
+
 	return opts, nil
+}
+
+// validateEvalDBName は DROP してよい名前だけを通す。
+//
+// 🔴 正規表現 ^recall_eval[a-z0-9_]*$ と同じものを手で書いている。
+// regexp.MustCompile はパッケージ変数に置けば GO-007（可変グローバル禁止）に、
+// 関数内に置けば呼び出しごとの再コンパイルと panic 経路に触れる。
+// 20 行に満たない検査に、そのどちらの対価も払わない。
+func validateEvalDBName(name string) error {
+	suffix, found := strings.CutPrefix(name, defaultEvalDBName)
+	if !found {
+		return fmt.Errorf("%w: %q must start with %q", errEvalDBName, name, defaultEvalDBName)
+	}
+
+	for _, r := range suffix {
+		if !isEvalDBNameRune(r) {
+			return fmt.Errorf("%w: %q contains %q (only lowercase letters, digits and _ may follow %q)",
+				errEvalDBName, name, string(r), defaultEvalDBName)
+		}
+	}
+
+	return nil
+}
+
+// isEvalDBNameRune は接頭辞に続けてよい文字かを返す。
+func isEvalDBNameRune(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_'
 }
 
 // run は評価セットを読み、計測し、レポートを書く。
@@ -536,21 +614,36 @@ func (s session) openPostgresStore(
 		return evalStore{}, fmt.Errorf("%w: %w", errFlags, err)
 	}
 
+	// 🔴 候補の作り方もここで解釈する。既定へ黙って倒すと、綴り誤りが
+	// 「exhaustive で測った」結果として記録され、索引の after を取り違える
+	// (docs/adr/0022-indexed-candidate-search.md Decision 3)。
+	mode, err := postgres.ParseSearchMode(s.opts.mode)
+	if err != nil {
+		return evalStore{}, fmt.Errorf("%w: %w", errFlags, err)
+	}
+
 	tokenizer, err := buildTokenizer(s.opts.tokenizer)
 	if err != nil {
 		return evalStore{}, err
 	}
 
-	if err := recreateEvalDatabase(ctx); err != nil {
+	if err := recreateEvalDatabase(ctx, s.opts.evalDB); err != nil {
 		return evalStore{}, err
 	}
 
-	db, err := postgres.Open(ctx, evalDSN)
+	db, err := postgres.Open(ctx, evalDSN(s.opts.evalDB))
 	if err != nil {
 		return evalStore{}, fmt.Errorf("open evaluation database: %w", err)
 	}
 
-	store, err := postgres.New(db, embedder, tokenizer, fusion)
+	store, err := postgres.New(db, postgres.Options{
+		Embedder:   embedder,
+		Tokenizer:  tokenizer,
+		Fusion:     fusion,
+		SearchMode: mode,
+		CandidateK: s.opts.candidateK,
+		EfSearch:   s.opts.efSearch,
+	})
 	if err != nil {
 		return evalStore{}, errors.Join(fmt.Errorf("build store: %w", err), db.Close())
 	}
@@ -559,23 +652,35 @@ func (s session) openPostgresStore(
 		return evalStore{}, errors.Join(fmt.Errorf("migrate: %w", err), store.Close())
 	}
 
-	settings := store.RankingSettings()
+	return evalStore{store: store, db: db, ranking: postgresRanking(store.RankingSettings())}, nil
+}
 
-	// 🔴 ポインタで渡すのは「無い」と「0」を区別するためである。ts_rank の
-	// 正規化フラグは 0 が実際に使っている値なので、値のコピーを1つ取って
-	// その番地を渡す。settings のフィールドを直接指さないのは、ローカル変数の
-	// 寿命を明示して「後で書き換わらない値」にしておくためである。
+// postgresRanking はストアの条件をレポートの形へ写す。
+//
+// 🔴 ポインタで渡すのは「無い」と「0」を区別するためである。ts_rank の
+// 正規化フラグは 0 が実際に使っている値なので、値のコピーを1つ取って
+// その番地を渡す。settings のフィールドを直接指さないのは、ローカル変数の
+// 寿命を明示して「後で書き換わらない値」にしておくためである。
+//
+// 🔑 CandidateK と EfSearch はストアが既にポインタで返す（exhaustive では nil）。
+// ここで nil を 0 に潰さないこと——潰した瞬間に「K=0 で測った」というありえない
+// 条件がレポートに載る (ADR 0022 Decision 3・様式 v7)。
+func postgresRanking(settings postgres.RankingSettings) eval.RankingSettings {
 	tsRank := settings.TsRankNormalization
 	rrfK := settings.RRFK
+	mode := settings.SearchMode
 
-	return evalStore{store: store, db: db, ranking: eval.RankingSettings{
+	return eval.RankingSettings{
 		Fusion:              settings.Fusion,
 		Store:               settings.Store,
 		LexicalScorer:       settings.LexicalScorer,
 		TokenizerID:         settings.TokenizerID,
 		TsRankNormalization: &tsRank,
 		RRFK:                &rrfK,
-	}}, nil
+		SearchMode:          &mode,
+		CandidateK:          settings.CandidateK,
+		EfSearch:            settings.EfSearch,
+	}
 }
 
 // openSQLiteStore は評価専用のファイルを作り直して繋ぐ。
@@ -590,6 +695,16 @@ func (s session) openSQLiteStore(
 		return evalStore{}, fmt.Errorf(
 			"%w: -store %s does not support -fusion %q (only %q is implemented)",
 			errFlags, storeNameSQLite, s.opts.fusion, postgres.FusionWeightedSum.String())
+	}
+
+	// 🔴 -mode candidates も受け付けない。索引つきの候補生成は Postgres の
+	// 話であって、SQLite は ADR 0022 の対象外である (Decision 5)。黙って
+	// exhaustive に倒すと、「candidates で測った」と記録されたレポートが
+	// 全探索の数字を持つことになる——-fusion を拒否しているのと同じ理由。
+	if s.opts.mode != postgres.SearchModeExhaustive.String() {
+		return evalStore{}, fmt.Errorf(
+			"%w: -store %s does not support -mode %q (ADR 0022 covers postgres only)",
+			errFlags, storeNameSQLite, s.opts.mode)
 	}
 
 	tokenizer, err := buildTokenizer(s.opts.tokenizer)
@@ -628,6 +743,13 @@ func (s session) openSQLiteStore(
 		// 記録されたことになる（v3 までがそうだった・様式 v4 で塞いだ）。
 		TsRankNormalization: nil,
 		RRFK:                nil,
+		// 🔴 候補の作り方も同じ扱いである。SQLite に索引つきの候補生成は
+		// 無いので、"exhaustive" と書くと「全探索という選択をした」と読める。
+		// 選択肢が1つしか無いことと、2つのうち片方を選んだことは違う
+		// (ADR 0022 Decision 5・様式 v7)。
+		SearchMode: nil,
+		CandidateK: nil,
+		EfSearch:   nil,
 	}}, nil
 }
 
@@ -656,14 +778,14 @@ func recreateEvalFile(path string) error {
 //
 // 作り直すのは、前回の残骸に依存した計測が「たまたま良い数字を出す」状態を
 // 作らないため。internal/store/postgres/main_test.go の流儀を踏襲している。
-func recreateEvalDatabase(ctx context.Context) error {
+func recreateEvalDatabase(ctx context.Context, dbName string) error {
 	// ドライバ名は pgx。postgres パッケージが登録するのと同じ値である。
 	admin, err := sql.Open("pgx", adminDSN)
 	if err != nil {
 		return fmt.Errorf("%w: open admin connection: %w", errEvalDatabase, err)
 	}
 
-	if err := resetDatabase(ctx, admin); err != nil {
+	if err := resetDatabase(ctx, admin, dbName); err != nil {
 		return errors.Join(err, admin.Close())
 	}
 
@@ -676,9 +798,12 @@ func recreateEvalDatabase(ctx context.Context) error {
 
 // resetDatabase は DROP して CREATE する。
 //
-// DB 名は識別子なのでプレースホルダにできない。値は定数 evalDBName だけで、
-// 外部入力を連結する経路は無い。
-func resetDatabase(ctx context.Context, admin *sql.DB) error {
+// DB 名は識別子なのでプレースホルダにできず、ここは文字列連結になる。
+// 🔴 だからこそ dbName は validateEvalDBName を通ったものでなければならない。
+// parseFlags がフラグを読んだ直後に通しているので、この関数へ届く名前は
+// recall_eval で始まり [a-z0-9_] だけが続く——開発用の recall にも
+// テスト用の recall_test_<pid> にも当たらない形に閉じている。
+func resetDatabase(ctx context.Context, admin *sql.DB, dbName string) error {
 	if err := admin.PingContext(ctx); err != nil {
 		return fmt.Errorf("%w: cannot reach postgres, run `docker compose up -d`: %w",
 			errEvalDatabase, err)
@@ -686,12 +811,12 @@ func resetDatabase(ctx context.Context, admin *sql.DB) error {
 
 	// FORCE は残った接続を切ってから落とす（PostgreSQL 13 以降）。
 	if _, err := admin.ExecContext(ctx,
-		`DROP DATABASE IF EXISTS `+evalDBName+` WITH (FORCE)`); err != nil {
-		return fmt.Errorf("%w: drop %s: %w", errEvalDatabase, evalDBName, err)
+		`DROP DATABASE IF EXISTS `+dbName+` WITH (FORCE)`); err != nil {
+		return fmt.Errorf("%w: drop %s: %w", errEvalDatabase, dbName, err)
 	}
 
-	if _, err := admin.ExecContext(ctx, `CREATE DATABASE `+evalDBName); err != nil {
-		return fmt.Errorf("%w: create %s: %w", errEvalDatabase, evalDBName, err)
+	if _, err := admin.ExecContext(ctx, `CREATE DATABASE `+dbName); err != nil {
+		return fmt.Errorf("%w: create %s: %w", errEvalDatabase, dbName, err)
 	}
 
 	return nil
@@ -1126,6 +1251,9 @@ func (s session) logSummary(report eval.Report) {
 		// 🔴 分割器も出す。bigram と kagome を続けて測るときに、端末の出力だけで
 		// どちらの数字か分からないと取り違える (ADR 0018)。
 		slog.String("tokenizer_id", report.Conditions.Ranking.TokenizerID),
+		// 🔴 候補の作り方も出す。索引の before/after を続けて測るときに、
+		// 端末の出力だけでどちらの数字か分からないと取り違える (ADR 0022)。
+		slog.String("search_mode", searchModeOf(report.Conditions.Ranking)),
 		// micro は正解チャンク単位の内訳。クエリ単位のマクロ平均とは別物で、
 		// 「どのチャンクが拾えていないか」を見るにはこちらが要る。
 		slog.Float64("micro_recall", summary.MicroRecall.Value),
@@ -1138,6 +1266,19 @@ func (s session) logSummary(report eval.Report) {
 		slog.Float64("p95_without_embedding_ms", summary.Latency.WithoutEmbedding.P95MS),
 		slog.String("model_digest", report.Environment.ModelDigest),
 	)
+}
+
+// searchModeOf は記録から候補の作り方を取り出す。
+//
+// nil は「そのストアに候補の作り方という概念が無い」を意味する（sqlite）。
+// 端末では "n/a" と出す——"exhaustive" と書くと、選択肢が1つしか無いことと
+// 2つのうち片方を選んだことが区別できなくなる (ADR 0022 Decision 5)。
+func searchModeOf(ranking eval.RankingSettings) string {
+	if ranking.SearchMode == nil {
+		return "n/a"
+	}
+
+	return *ranking.SearchMode
 }
 
 // distractorCount は記録から紛れ込みの件数を取り出す。

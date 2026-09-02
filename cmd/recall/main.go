@@ -54,6 +54,12 @@ var errVoyageNotImplemented = errors.New("recall: the voyage embedder is not imp
 // 無いと「どのストアも組み立てられなかった」が nil のストアとして先へ進む。
 var errUnknownStore = errors.New("recall: unknown store")
 
+// errSearchModeNotSupported は、選んだストアがその候補の作り方を持たないことを表す。
+//
+// 🔴 黙って既定へ倒さない。倒すと「candidates で起動したつもり」の構成が
+// 全探索の数字を出し、索引の after を取り違える (ADR 0022 Decision 5)。
+var errSearchModeNotSupported = errors.New("recall: the store does not support this search mode")
+
 // errUnknownTokenizer は設定が未知の分割器を指していることを表す。
 //
 // config.validateTokenizer が既に弾いているので、通常はここへ来ない。
@@ -134,6 +140,11 @@ func run(log *slog.Logger) error {
 		// ものかは tokenizer_id が決めており、切り替えたことに気づかないまま
 		// 起動すると最初の検索が不一致エラーで落ちる（ADR 0018）。
 		slog.String("tokenizer_id", tokenizer.ID()),
+		// 🔴 候補の作り方も出す。exhaustive と candidates は同じ API で同じ
+		// 見た目の結果を返すので、どちらで走っているかは起動ログでしか
+		// 分からない。索引の before/after を取り違えないための印である
+		// (docs/adr/0022-indexed-candidate-search.md Decision 3)。
+		slog.String("search_mode", string(cfg.SearchMode)),
 		slog.String("ollama_url", cfg.OllamaBaseURL),
 		// 🔴 トークンそのものは絶対に出さない。長さも先頭数文字も出さない。
 		// 運用者が知る必要があるのは「認証が効いているか」だけである
@@ -269,13 +280,29 @@ func openPostgres(
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
+	mode, err := searchMode(cfg)
+	if err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
+
 	// ここで Embedder の次元と vector(1024) 列の突き合わせが効く。
 	// 食い違っていれば「起動はするが取り込みが全部落ちる」前に落ちる。
 	// 🔴 融合方式を配線点で明示する。ゼロ値でも同じ方式になるが、書かないと
 	// 「既定がどちらか」がコードから読めなくなる。加重和は要件定義 F-4 と
 	// OpenAPI が定める契約そのものなので、サーバはこれを使う。方式を変えるのは
 	// 実測を見て ADR を書いてからである。
-	store, err := postgres.New(db, embedder, tokenizer, postgres.FusionWeightedSum)
+	//
+	// 🔴 候補の作り方は設定から取る。既定は exhaustive（現行の全探索）であり、
+	// candidates は ADR 0022 の計測モードである。既定を移すのは after の実測を
+	// 見て別の ADR を書いてからで、ここでハードコードしない。
+	store, err := postgres.New(db, postgres.Options{
+		Embedder:   embedder,
+		Tokenizer:  tokenizer,
+		Fusion:     postgres.FusionWeightedSum,
+		SearchMode: mode,
+		CandidateK: cfg.CandidateK,
+		EfSearch:   cfg.HNSWEfSearch,
+	})
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("build store: %w", err), db.Close())
 	}
@@ -285,6 +312,22 @@ func openPostgres(
 	}
 
 	return store, nil
+}
+
+// searchMode は設定の文字列を postgres の型へ写す。
+//
+// 🔴 config.SearchMode をそのまま渡さない。config は具体ストアを知らない層
+// なので (ARC-001) 型を共有できず、綴りが一致していることだけが両者を結んで
+// いる。その突き合わせを配線点の1関数に閉じ、失敗を起動時に落とす。
+// config.validateSearch が既に弾いているので通常はここへ来ないが、番人が
+// 無いとゼロ値（exhaustive）で黙って起動する。
+func searchMode(cfg config.Config) (postgres.SearchMode, error) {
+	mode, err := postgres.ParseSearchMode(string(cfg.SearchMode))
+	if err != nil {
+		return 0, fmt.Errorf("search mode: %w", err)
+	}
+
+	return mode, nil
 }
 
 // openSQLite はファイルを開き、次元の突き合わせとマイグレーションを行う。
@@ -298,6 +341,14 @@ func openPostgres(
 func openSQLite(
 	ctx context.Context, cfg config.Config, embedder embed.Embedder, tokenizer lexical.Tokenizer,
 ) (backingStore, error) {
+	// 🔴 候補モードは Postgres の索引の話であって、SQLite は本 ADR の対象外で
+	// ある (ADR 0022 Decision 5)。黙って exhaustive に倒すと、「candidates で
+	// 起動したつもり」の運用者が全探索の数字を見ることになる。
+	if cfg.SearchMode != config.SearchModeExhaustive {
+		return nil, fmt.Errorf("%w: RECALL_STORE=%s does not support RECALL_SEARCH_MODE=%s",
+			errSearchModeNotSupported, config.StoreSQLite, cfg.SearchMode)
+	}
+
 	db, err := sqlite.Open(ctx, cfg.DBPath)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)

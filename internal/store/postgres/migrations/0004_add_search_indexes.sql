@@ -1,0 +1,47 @@
+-- 0004: 検索の索引。ベクトル側 HNSW と語彙側 GIN を**同時に**張る。
+--
+-- 🔴 マイグレーションは forward-only である。down を書かない。
+--    詳細と理由は migrate.go の冒頭コメントを参照。
+--
+-- 判断の正本は docs/adr/0022-indexed-candidate-search.md の Decision 2。
+--
+-- 🔑 0001 と 0002 は「索引を作らないこと」を赤字で禁じていた。その禁止は
+--    ADR 0007 の手順 1〜2（索引なしで完成させ、10万件で測る）を守るための
+--    ものであり、手順 2 は
+--    docs/benchmarks/2026-09-02-eval-100k-before-index.md で終わった。
+--    ⇒ **before の数字は既に取れている。** 本ファイルは手順 3 である。
+--
+--    before（10万件・索引なし・既定構成）:
+--      埋め込みを除く p95   5,766 ms（259 件では 9〜14 ms）
+--      recall@10 / MRR      0.586 / 0.677
+--      実行計画             Seq Scan 100,259 行・単一プロセス・一時ファイル 66MB 書き
+--
+-- 🔴 索引を張っただけでは速くならない。現行の全探索 SQL は ORDER BY が
+--    alpha*vector + (1-alpha)*lexical という合成式で、どの索引の順序でもない。
+--    索引が効くのは RECALL_SEARCH_MODE=candidates の 2 段 SQL のほうである
+--    （ADR 0022 Decision 1）。⇒ before/after の差には「索引の効果」と
+--    「候補生成の効果」が分離できない形で混ざる。ADR 0022 Decision 3 に明記した。
+
+-- ベクトル側。演算子クラスは vector_ip_ops。
+--
+-- 🔴 検索の演算子 <#>（負の内積）と対になっていなければならない。
+--    vector_cosine_ops（<=>）や vector_l2_ops（<->）を張ると、索引は作られるのに
+--    **黙って使われない**。エラーにならないので、症状は「速くならない」だけになる。
+--    searcher.go が <#> を選んだ理由（正規化済みベクトルでは内積とコサインの
+--    順位が一致し、乗算と加算だけで済む）はそちらのコメントにある。
+--    migrate_test.go の TestSearchIndexesExistWithCorrectOperatorClass が
+--    この対応を機械で見張っている。
+--
+-- m と ef_construction は pgvector の既定（16 / 64）のままにする。
+-- 変えるなら after の実測を添えること（QLT-008）。構築時のパラメータは
+-- 張り直さなければ変えられないので、既定から動かす判断には数字が要る。
+CREATE INDEX chunks_embedding_hnsw ON chunks USING hnsw (embedding vector_ip_ops);
+
+-- 語彙側。lexemes は 0002 が作った生成列（tsvector）である。
+--
+-- 🔴 GIN を後回しにしない。before の EXPLAIN では ts_rank の全行計算が
+--    距離計算より重く（同一計画形で 1.68 倍）、語彙側を絞らなければ
+--    候補生成の意味が半分になる（ADR 0022 の却下表）。
+--    候補モードの語彙側は `lexemes @@ to_tsquery(...)` で絞ってから
+--    ts_rank を計算するので、この索引が効く形になっている。
+CREATE INDEX chunks_lexemes_gin ON chunks USING gin (lexemes);
