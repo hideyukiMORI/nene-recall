@@ -34,7 +34,19 @@ import (
 // 「フィールドが無い」で静かに素通りするのではなく、型の不一致で落ちるように
 // するためである。v1 のレポート（docs/benchmarks/data/2026-09-0[12]-*.json）は
 // 文字列の配列を持つ。
-const ReportSchema = "nene-recall/eval-report/v3"
+//
+// v4 (2026-09-02) で変えたところ（レポートを読み違える経路を3つ塞ぐ）:
+//   - conditions.alpha を float64 にした。float32 経由の 0.6000000238418579 が
+//     刻まれると、機械での突き合わせで == 0.6 が偽になる
+//   - conditions.ranking の ts_rank_normalization と rrf_k をポインタにして
+//     omitempty を付けた。そのストアに無い項目は**キーごと出ない**
+//   - conditions.alpha_note をストアごとに変えた。配線点 (cmd/eval) が選ぶ
+//
+// 🔴 v4 の3点はどれも「測っていないことを書かない」ためである。v3 までは
+// sqlite のレポートにも ts_rank_normalization: 0 と postgres 向けの alpha_note が
+// 入っており、SQLite に ts_rank は無いのに「フラグ 0 で測った」と読めた。
+// 条件表が実際の条件と違うレポートは、正本になれない (ADR 0013)。
+const ReportSchema = "nene-recall/eval-report/v4"
 
 // Report は1回の計測の全記録。JSON でそのまま docs/benchmarks/data/ に残す。
 //
@@ -129,13 +141,23 @@ type Conditions struct {
 	// レポートの構造体だからといって例外にしない (CNF-002 / ADR 0003)。
 	OrgID org.ID `json:"org_id"`
 	// Alpha は合成の重み。
-	Alpha float32 `json:"alpha"`
+	//
+	// 🔴 float64 で持つ。検索へ渡る値は float32 だが (index.Query.Alpha)、
+	// 記録するのは float32 へ落とす前の10進である。float64(float32(0.6)) は
+	// 0.6000000238418579 になり、レポートを機械で突き合わせる側で == 0.6 が
+	// 偽になる。レポートは第三者が集計値を再計算するための正本なので
+	// (ADR 0013)、入力に書かれた値がそのまま読める形で刻む。
+	Alpha float64 `json:"alpha"`
 	// AlphaNote は alpha の読み方の但し書き。
 	//
 	// 🔴 数字だけを載せると、読んだ人はそれが普遍的に調整済みの値だと受け取る。
-	// 既定 0.8 は ADR 0015 が実測から選んだ値だが、正規化方式・分割器・埋め込み
-	// モデル・候補集合の作り方に依存する条件付きの値である（ADR 0015 Decision 3）。
-	// レポートはそれ自体で読まれるので、但し書きを外部の文書に頼らない。
+	// alpha の最適値は正規化方式・分割器・埋め込みモデル・候補集合の作り方に
+	// 依存する条件付きの値である（ADR 0015 Decision 3）。レポートはそれ自体で
+	// 読まれるので、但し書きを外部の文書に頼らない。
+	//
+	// 🔴 文言は配線点 (cmd/eval) が store に応じて選ぶ。定数をこの層に置くと、
+	// ストアを知らないはずの internal/eval に Postgres の事情が漏れ (ARC-001)、
+	// SQLite のレポートに「ADR 0015 が選んだ 0.8」という測っていない話が載る。
 	AlphaNote string `json:"alpha_note"`
 	// Limit は1クエリあたりの取得件数。
 	Limit int `json:"limit"`
@@ -168,6 +190,11 @@ type Conditions struct {
 //
 // 🔑 internal/eval はこの中身を解釈しない。具体ストアを知らない層なので
 // (ARC-001)、値は配線点 (cmd/eval) が集めてそのまま運ぶ。
+//
+// 🔴 そのストアに存在しないつまみは**キーごと出さない**。v3 までは
+// ts_rank_normalization が sqlite のレポートにも 0 で入っており、SQLite に
+// ts_rank は無いのに「フラグ 0 で測った」と読めた。測っていないことを
+// 書かないのが条件表の役目である。
 type RankingSettings struct {
 	// Fusion は融合方式の名前（例 "weighted-sum" / "rrf"）。
 	Fusion string `json:"fusion"`
@@ -182,14 +209,16 @@ type RankingSettings struct {
 	// 🔴 2つのストアの recall の差には「ストアの差」と「採点関数の差」が
 	// 混ざる。分けて読むための印であり、Store とは別に要る。
 	LexicalScorer string `json:"lexical_scorer"`
-	// TsRankNormalization は ts_rank に渡した正規化フラグ。
+	// TsRankNormalization は ts_rank に渡した正規化フラグ。postgres 専用。
 	//
-	// ⚠️ postgres でしか意味を持たない。store が "sqlite" のレポートでは 0 で
-	// あり、それは「フラグ 0 で測った」という意味ではない。LexicalScorer が
-	// どちらの読み方をすべきかを決める。
-	TsRankNormalization int `json:"ts_rank_normalization"`
-	// RRFK は RRF の平滑化定数。TsRankNormalization と同じく postgres 専用。
-	RRFK int `json:"rrf_k"`
+	// 🔴 ポインタなのは「無い」と「0」を区別するためである。postgres の
+	// 正規化フラグは **0 が正しい値**なので、int の omitempty では実際に
+	// 測った条件のほうが消えてしまう。nil は「この採点関数にそのつまみが
+	// 無い」を意味し、JSON からはキーごと消える (GO-004: nil の意味は一つ)。
+	TsRankNormalization *int `json:"ts_rank_normalization,omitempty"`
+	// RRFK は RRF の平滑化定数。TsRankNormalization と同じく postgres 専用で、
+	// 同じ理由でポインタである。
+	RRFK *int `json:"rrf_k,omitempty"`
 }
 
 // QueryReport はクエリ1件の生データ。

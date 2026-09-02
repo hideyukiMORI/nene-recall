@@ -41,7 +41,8 @@ func defaultOptions(t *testing.T, rounds int) eval.Options {
 	}
 
 	return eval.Options{
-		OrgID: id, Alpha: 1, Limit: eval.DefaultLimit, Rounds: rounds,
+		OrgID: id, Alpha: 1, AlphaNote: "not tuned",
+		Limit: eval.DefaultLimit, Rounds: rounds,
 		Ranking: testRanking(),
 	}
 }
@@ -53,7 +54,7 @@ func defaultOptions(t *testing.T, rounds int) eval.Options {
 func testRanking() eval.RankingSettings {
 	return eval.RankingSettings{
 		Fusion: "weighted-sum", Store: "postgres", LexicalScorer: "ts_rank",
-		TsRankNormalization: 0, RRFK: 60,
+		TsRankNormalization: intPtr(0), RRFK: intPtr(60),
 	}
 }
 
@@ -334,18 +335,39 @@ func TestMeasurePropagatesFailures(t *testing.T) {
 func TestMeasureRejectsInvalidOptions(t *testing.T) {
 	valid := defaultOptions(t, 1)
 
+	note := "not tuned"
+
 	cases := map[string]eval.Options{
-		"org_id がゼロ値": {OrgID: 0, Alpha: 1, Limit: 10, Rounds: 1, Ranking: testRanking()},
-		"limit が 0":   {OrgID: valid.OrgID, Alpha: 1, Limit: 0, Rounds: 1, Ranking: testRanking()},
-		"rounds が 0":  {OrgID: valid.OrgID, Alpha: 1, Limit: 10, Rounds: 0, Ranking: testRanking()},
-		"alpha が範囲外":  {OrgID: valid.OrgID, Alpha: 1.5, Limit: 10, Rounds: 1, Ranking: testRanking()},
+		"org_id がゼロ値": {
+			OrgID: 0, Alpha: 1, AlphaNote: note, Limit: 10, Rounds: 1, Ranking: testRanking(),
+		},
+		"limit が 0": {
+			OrgID: valid.OrgID, Alpha: 1, AlphaNote: note, Limit: 0, Rounds: 1,
+			Ranking: testRanking(),
+		},
+		"rounds が 0": {
+			OrgID: valid.OrgID, Alpha: 1, AlphaNote: note, Limit: 10, Rounds: 0,
+			Ranking: testRanking(),
+		},
+		"alpha が範囲外": {
+			OrgID: valid.OrgID, Alpha: 1.5, AlphaNote: note, Limit: 10, Rounds: 1,
+			Ranking: testRanking(),
+		},
 		// 🔴 条件の記録が欠けたレポートは、後から条件を特定できないので正本に
 		// なれない。融合方式の記録が空なら計測そのものを止める。
 		"融合方式の記録が空": {
-			OrgID: valid.OrgID, Alpha: 1, Limit: 10, Rounds: 1,
+			OrgID: valid.OrgID, Alpha: 1, AlphaNote: note, Limit: 10, Rounds: 1,
 			Ranking: eval.RankingSettings{
-				Fusion: "", Store: "", LexicalScorer: "", TsRankNormalization: 0, RRFK: 60,
+				Fusion: "", Store: "", LexicalScorer: "",
+				TsRankNormalization: nil, RRFK: nil,
 			},
+		},
+		// 🔴 但し書きが無い alpha は「調整済みの値」として読まれる
+		// (CLAUDE.md 地雷7)。文言は配線点が store に応じて選ぶので、
+		// この層でできるのは「空なら止める」ことだけである。
+		"alpha の但し書きが空": {
+			OrgID: valid.OrgID, Alpha: 1, AlphaNote: "", Limit: 10, Rounds: 1,
+			Ranking: testRanking(),
 		},
 	}
 
@@ -482,12 +504,39 @@ func TestMeasureRecordsTheConditions(t *testing.T) {
 		t.Errorf("PercentileMethod = %q, want %q", c.PercentileMethod, eval.PercentileMethod)
 	}
 
-	if c.AlphaNote == "" {
-		t.Error("AlphaNote が空。alpha の読み方の但し書きをレポート自身に残すこと")
+	// 🔴 但し書きは配線点が渡したものがそのまま載る。この層が文言を持つと、
+	// ストアを知らないはずの internal/eval に Postgres の事情が漏れる
+	// (ARC-001)。ここで見るのは「渡したものが載る」ことだけである。
+	if c.AlphaNote != defaultOptions(t, 3).AlphaNote {
+		t.Errorf("AlphaNote = %q, want %q", c.AlphaNote, defaultOptions(t, 3).AlphaNote)
 	}
 
 	if !equalInts(c.KValues, eval.KValues()) {
 		t.Errorf("KValues = %v, want %v", c.KValues, eval.KValues())
+	}
+}
+
+// TestMeasureRecordsAlphaWithoutFloat32Rounding は、条件に刻まれる alpha が
+// 検索へ渡すときの float32 の丸めを帯びないことを見る。
+//
+// 🔴 index.Query.Alpha は float32 という契約なので、計測ループはどこかで
+// 必ず落とす。落とした値を条件へ書き戻すと 0.6 が 0.6000000238418579 になり、
+// レポートを機械で突き合わせる側で == 0.6 が偽になる（様式 v3 までの実害）。
+func TestMeasureRecordsAlphaWithoutFloat32Rounding(t *testing.T) {
+	idx := newFakeIndex()
+
+	opts := defaultOptions(t, 1)
+	opts.Alpha = 0.6
+
+	got, err := newTestRunner(t, idx, &fakeEmbedder{calls: 0, err: nil}).
+		Measure(t.Context(), smallDataset(), opts)
+	if err != nil {
+		t.Fatalf("Measure: %v", err)
+	}
+
+	if got.Conditions.Alpha != 0.6 {
+		t.Errorf("Alpha = %v, want 0.6 ちょうど（float32 を経由すると 0.6000000238418579 になる）",
+			got.Conditions.Alpha)
 	}
 }
 

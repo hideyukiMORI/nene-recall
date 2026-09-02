@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -118,6 +119,33 @@ var (
 const (
 	storeNamePostgres = string(config.StorePostgres)
 	storeNameSQLite   = string(config.StoreSQLite)
+)
+
+// alphaNotePostgres / alphaNoteSQLite は alpha の読み方をレポート自身に
+// 書き残す文言。
+//
+// 🔴 レポートは単体で読まれる。数字だけを載せると、読んだ人はそれが普遍的に
+// 調整済みの値だと受け取る (CLAUDE.md 地雷7)。
+//
+// 🔴 ストアごとに文言を分ける。ADR 0015 が 0.8 を選んだのは postgres
+// (ts_rank・クエリ内正規化) の掃引であって、SQLite (FTS5 の bm25) は対象外で
+// ある。同じ但し書きを両方に付けると、SQLite でも 0.8 が選ばれた形跡がある
+// ように読める——実測のプラトーは 0.8〜0.9 で postgres とずれている。
+// **測っていないことをレポートに書かない。**
+//
+// 🔴 文言が internal/eval ではなくここにあるのは、ストアを知ってよいのが
+// 配線点だけだからである (ARC-001)。
+const (
+	alphaNotePostgres = "the default 0.8 was chosen on the 2026-09-02 eval set " +
+		"(bge-m3:1024, bigram, per-query lexical normalization); it is the centre of the " +
+		"0.7-0.9 plateau, not a universal optimum (ADR 0015). " +
+		"Re-measure if any of those conditions change."
+	alphaNoteSQLite = "ADR 0015 does not cover the sqlite store: the default 0.8 was " +
+		"chosen on postgres (ts_rank), not here. The 2026-09-02 sweep on sqlite " +
+		"(bge-m3:1024, bigram, fts5 bm25) put the plateau at 0.8-0.9, so 0.8 falls " +
+		"inside it but was not selected for this backend " +
+		"(docs/benchmarks/2026-09-02-eval-store-comparison.md). " +
+		"Re-measure if any of those conditions change."
 )
 
 func main() {
@@ -390,12 +418,19 @@ func (s session) openPostgresStore(
 
 	settings := store.RankingSettings()
 
+	// 🔴 ポインタで渡すのは「無い」と「0」を区別するためである。ts_rank の
+	// 正規化フラグは 0 が実際に使っている値なので、値のコピーを1つ取って
+	// その番地を渡す。settings のフィールドを直接指さないのは、ローカル変数の
+	// 寿命を明示して「後で書き換わらない値」にしておくためである。
+	tsRank := settings.TsRankNormalization
+	rrfK := settings.RRFK
+
 	return evalStore{store: store, db: db, ranking: eval.RankingSettings{
 		Fusion:              settings.Fusion,
 		Store:               settings.Store,
 		LexicalScorer:       settings.LexicalScorer,
-		TsRankNormalization: settings.TsRankNormalization,
-		RRFK:                settings.RRFK,
+		TsRankNormalization: &tsRank,
+		RRFK:                &rrfK,
 	}}, nil
 }
 
@@ -437,11 +472,12 @@ func (s session) openSQLiteStore(
 		Fusion:        settings.Fusion,
 		Store:         settings.Store,
 		LexicalScorer: settings.LexicalScorer,
-		// ⚠️ postgres 専用の2項目は 0 で残す。「フラグ 0 で測った」ではなく
-		// 「この採点関数にそのつまみが無い」という意味である。読み分けは
-		// LexicalScorer が決める (internal/eval/report.go)。
-		TsRankNormalization: 0,
-		RRFK:                0,
+		// 🔴 postgres 専用の2項目は nil にする。JSON からはキーごと消え、
+		// レポートは「この採点関数にそのつまみが無い」と読める。0 を入れると
+		// 「フラグ 0 で測った」と読まれ、SQLite に無い ts_rank の条件が
+		// 記録されたことになる（v3 までがそうだった・様式 v4 で塞いだ）。
+		TsRankNormalization: nil,
+		RRFK:                nil,
 	}}, nil
 }
 
@@ -525,22 +561,12 @@ func (s session) measure(
 		return eval.Measurement{}, fmt.Errorf("build runner: %w", err)
 	}
 
-	orgID, err := org.NewID(s.opts.rawOrg)
+	options, err := s.measureOptions(target)
 	if err != nil {
-		return eval.Measurement{}, fmt.Errorf("org id: %w", err)
+		return eval.Measurement{}, err
 	}
 
-	measurement, err := runner.Measure(ctx, ds, eval.Options{
-		OrgID:  orgID,
-		Alpha:  s.alpha(),
-		Limit:  s.opts.limit,
-		Rounds: s.opts.rounds,
-		// 🔴 条件はストアに聞く。フラグの値をそのまま書き写すと、既定を
-		// 変えたときに「指定したつもりの条件」と「実際に使われた条件」が
-		// ずれる。レポートは後者でなければ意味が無い。組み立てた場所で
-		// 写し替えてあるので、ここではその値をそのまま運ぶ。
-		Ranking: target.ranking,
-	})
+	measurement, err := runner.Measure(ctx, ds, options)
 	if err != nil {
 		return eval.Measurement{}, fmt.Errorf("measure: %w", err)
 	}
@@ -548,17 +574,89 @@ func (s session) measure(
 	return measurement, nil
 }
 
+// measureOptions は計測条件を組み立てる。
+//
+// 🔴 条件はストアに聞く。フラグの値をそのまま書き写すと、既定を変えたときに
+// 「指定したつもりの条件」と「実際に使われた条件」がずれる。レポートは後者で
+// なければ意味が無い。ranking は組み立てた場所で写し替えてあるので運ぶだけで、
+// alpha_note も同じ理由で target.ranking.Store から選ぶ。
+func (s session) measureOptions(target evalStore) (eval.Options, error) {
+	orgID, err := org.NewID(s.opts.rawOrg)
+	if err != nil {
+		return eval.Options{}, fmt.Errorf("org id: %w", err)
+	}
+
+	alpha, err := s.alpha()
+	if err != nil {
+		return eval.Options{}, err
+	}
+
+	note, err := alphaNote(target.ranking.Store)
+	if err != nil {
+		return eval.Options{}, err
+	}
+
+	return eval.Options{
+		OrgID:     orgID,
+		Alpha:     alpha,
+		AlphaNote: note,
+		Limit:     s.opts.limit,
+		Rounds:    s.opts.rounds,
+		Ranking:   target.ranking,
+	}, nil
+}
+
+// alphaNote は測ったストアに対応する但し書きを選ぶ。
+//
+// 🔴 未知の名前を既定へ黙って倒さない。倒すと SQLite のレポートに Postgres の
+// 但し書きが載り、v4 で塞いだはずの読み違えがそのまま戻る。errUnknownStore を
+// 使うのは openEvalStore と同じ理由である。
+func alphaNote(store string) (string, error) {
+	switch store {
+	case storeNamePostgres:
+		return alphaNotePostgres, nil
+	case storeNameSQLite:
+		return alphaNoteSQLite, nil
+	}
+
+	return "", fmt.Errorf("%w: %w: %q (want %q or %q)",
+		errFlags, errUnknownStore, store, storeNamePostgres, storeNameSQLite)
+}
+
 // alpha は -alpha が未指定なら設定の既定値を使う。
+//
+// 🔴 float64 で返す。レポートに刻むのは float32 へ落とす前の10進である
+// (ADR 0013 の「集計値を第三者が再計算できる」は、条件の値が機械で
+// 突き合わせられることを含む)。
 //
 // ⚠️ 既定 0.8 は ADR 0015 が実測から選んだ値だが、測ったときの条件に紐づく
 // 条件付きの値である。-alpha で明示した値のほうは、掃引の1点でしかない。
 // どちらもレポートの alpha_note が但し書きを付けて回る。
-func (s session) alpha() float32 {
+func (s session) alpha() (float64, error) {
 	if s.opts.alpha < 0 {
-		return s.cfg.DefaultAlpha
+		return decimalOfFloat32(s.cfg.DefaultAlpha)
 	}
 
-	return float32(s.opts.alpha)
+	return s.opts.alpha, nil
+}
+
+// decimalOfFloat32 は float32 の値を、それを生んだ10進表記に戻して float64 にする。
+//
+// 🔴 float64(float32(0.8)) は 0.8000000119209290 になる。config.DefaultAlpha は
+// float32 なので、そのまま広げるとレポートに刻まれる値が設定に書いた 10進と
+// 一致しない。FormatFloat(..., 32) が返すのは「同じ float32 に戻る最短の10進」
+// なので、これを経由すれば設定の 0.8 が 0.8 のまま復元される。
+//
+// 🔑 config.DefaultAlpha を float64 に広げないのは、それが index.Query.Alpha
+// (float32・契約) と httpapi の既定値でもあるからである。型を広げる判断は
+// この修正の射程ではない。
+func decimalOfFloat32(v float32) (float64, error) {
+	f, err := strconv.ParseFloat(strconv.FormatFloat(float64(v), 'f', -1, 32), 64)
+	if err != nil {
+		return 0, fmt.Errorf("%w: alpha %v is not a finite decimal: %w", errFlags, v, err)
+	}
+
+	return f, nil
 }
 
 // embedQuery は Embedder を eval が要求する関数型に適合させる。
@@ -758,7 +856,7 @@ func (s session) logSummary(report eval.Report) {
 		slog.Float64("mrr", summary.MRR),
 		// 🔴 alpha を必ず出す。掃引しているときに、どの条件の数字を見ているのか
 		// 端末の出力だけで分からないと取り違える。
-		slog.Float64("alpha", float64(report.Conditions.Alpha)),
+		slog.Float64("alpha", report.Conditions.Alpha),
 		// 🔴 融合方式を必ず出す。alpha だけでは条件が決まらない
 		// （順位融合では alpha は無視される）。
 		slog.String("fusion", report.Conditions.Ranking.Fusion),
