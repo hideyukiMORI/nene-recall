@@ -83,6 +83,8 @@ CASE WHEN c.content LIKE '%term%' THEN 1 ELSE 0 END   -- を語数ぶん加算
 | F-14 | 同期 | Corpus のチャンク作成・更新・削除が Recall に伝播する |
 | F-15 | 縮退 | Recall が落ちても Corpus は PDO 実装に落ちて動き続ける |
 
+**契約の正本は [ADR 0020](adr/0020-phase2-corpus-integration-contract.md)** である（`external_id`・文書単位の削除・共有 Bearer トークン・同期書き込み・soft delete の二段フィルタ）。
+
 ### 3.3 やらないこと（非スコープ）
 
 - **LLM による回答生成** — Recall は**取得までを担当**し、生成は呼び出し側（Corpus / Concierge / Claude）の責務
@@ -195,6 +197,7 @@ Corpus 統合時は、PHP 側が返された `chunk_id` で MySQL から `Chunk`
 | **[0009](adr/0009-retrieval-evaluation-is-in-scope.md)** | **評価を Phase 1 の必須要件に** | **ベクトル DB 選定はもう差別化にならない。測ることが差別化** | 有効 |
 | **[0014](adr/0014-lexical-search-is-tsvector-over-bigram.md)** | **語彙検索は Go 側 bigram + `tsvector`・長さ正規化なし** | **実測で語彙は単体でベクトルを上回り、`ts_rank` の長さ正規化は有害だった（Q-1）** | 有効（Q-2 は未決のまま） |
 | **[0015](adr/0015-fusion-is-weighted-sum-with-alpha-0.8.md)** | **合成は加重和（語彙をクエリ内正規化）・`alpha` 既定 0.8** | **プラトー 0.7〜0.9 の中心。RRF に勝った（Q-3）** | 有効（条件付き） |
+| **[0020](adr/0020-phase2-corpus-integration-contract.md)** | **Phase 2 の契約: `external_id`・文書単位の削除・共有 Bearer トークン・同期書き込み** | **Corpus 側を読み取り調査して決めるべき点を4つに絞った（Q-5・Q-6）** | 有効 |
 
 ### 5.2 「何が差別化になるか」の整理
 
@@ -336,8 +339,8 @@ Ollama を Windows 側で走らせるのは、WSL の CUDA ユーザ空間ライ
 | Q-2 | 日本語の分割方式 | **未決**。bigram を既定とすることだけが決まっている（[ADR 0014](adr/0014-lexical-search-is-tsvector-over-bigram.md) Decision 4・`internal/lexical/bigram`）。bigram 側しか測っていないので形態素との優劣は語れない。⚠️ 形態素解析器を測るかどうかは**施主判断**（辞書という依存を抱える判断・ARC-004）。判断が出たら別の ADR で扱う |
 | ~~Q-3~~ | ~~`alpha` の既定値~~ | **決着（[ADR 0015](adr/0015-fusion-is-weighted-sum-with-alpha-0.8.md)・2026-09-02）**。**0.8**。掃引でプラトーは 0.7〜0.9、その中心を採った（argmax ではなくプラトーで選ぶ。58クエリの指標は1クエリ = 0.017 揺れる）。🔴 **条件付き**——正規化方式・分割器・埋め込みモデル・候補集合の作り方のどれかを変えたら測り直す |
 | Q-4 | reranker の採用 | 往復が増える。Phase 1 は入れない。⚠️ **この判断は基準線を見る前のものである**——最大の穴が `paraphrase` 0.44 であり、字面が違うことがそのカテゴリの定義である以上、語彙検索では埋まらない。埋め込みモデルの選択か reranker のほうが効く可能性がある（[基準線](benchmarks/2026-09-02-eval-vector-only-baseline.md) の「戦略への含意」）。**2026-09-02 時点では着手しない。記録だけ残す** |
-| Q-5 | Corpus との同期方式 | Webhook / ポーリング / Corpus からの同期書き込み。Phase 2 で決める |
-| Q-6 | 認証方式 | フリートは JWT fail-close 統一済み。Go 側で同等を実装するか、共有トークンにするか |
+| ~~Q-5~~ | ~~Corpus との同期方式~~ | **決着（[ADR 0020](adr/0020-phase2-corpus-integration-contract.md)・2026-09-02）**。**Corpus からの同期書き込み（write-through）＋再索引コマンド**。`ChunkRepositoryInterface` にデコレータを重ね、取り込み時の Recall 失敗は fail-loud にする。⚠️ Webhook は**依存方向の逆流**（Corpus ADR 0002）で却下、ポーリングは Recall に Corpus の DB 接続情報が要る（ADR 0001 の「単体で完結」を壊す）ため却下。取り消しと取りこぼしは再索引コマンドで回収する |
+| ~~Q-6~~ | ~~認証方式~~ | **決着（[ADR 0020](adr/0020-phase2-corpus-integration-contract.md)・2026-09-02）**。**共有 Bearer トークン `RECALL_API_TOKEN`**。設定時は `/v1/*` に必須で、`/healthz` `/readyz` は対象外。比較は定数時間（`crypto/subtle`）。⚠️ JWT は却下——サービス間の1対1で claims も期限も要らず、鍵の配布と検証コードが増えるだけである。必要になれば検証器を差し替える |
 | ~~Q-7~~ | ~~Ollama のスループット~~ | **決着（2026-09-01 実測）**。実チャンク相当(230字)で **88〜93 件/秒**、10万件の取り込みで**約18分**。ただし**バッチ化が前提**——1本ずつ送ると 11.8 件/秒＝約2時間21分。正本は [`docs/benchmarks/2026-09-01-baseline.md`](benchmarks/2026-09-01-baseline.md) |
 
 ### Q-1 / Q-2 で却下した選択肢（2026-09-02 コーディネーター裁定）
