@@ -61,6 +61,7 @@ bigram の実測（[比較文書](../benchmarks/2026-09-02-eval-lexical-hybrid.m
 - 分割器を変えると保存済みの `lexeme_text` と噛み合わない。`tokenizer_id` の不一致チェックが守る（既存）。
   評価は DB を作り直すので影響しない
 - 追従: 実測（bigram vs kagome・rounds=5・タグ別・`alpha` 掃引）→ Q-2 を閉じる ADR 0020（番号は着地順）
+  → 実測 [`docs/benchmarks/2026-09-02-eval-morph-vs-bigram.md`](../benchmarks/2026-09-02-eval-morph-vs-bigram.md)
 
 ## Related
 
