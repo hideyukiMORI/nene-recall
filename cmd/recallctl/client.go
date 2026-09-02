@@ -16,13 +16,16 @@ import (
 // ゼロ値は無効である。newClient を通すこと。
 type client struct {
 	baseURL string
-	http    *http.Client
+	// token は Bearer トークン。空なら Authorization を付けない。
+	token string
+	http  *http.Client
 }
 
 // newClient は宛先とタイムアウトからクライアントを作る。
 func newClient(o options) client {
 	return client{
 		baseURL: trimSlash(o.url),
+		token:   o.token,
 		http: &http.Client{
 			Transport:     nil, // 既定の Transport を使う
 			CheckRedirect: nil, // 既定のリダイレクト方針
@@ -119,6 +122,13 @@ func (c client) build(ctx context.Context, req request) (*http.Request, error) {
 
 	if req.body != nil {
 		httpReq.Header.Set("Content-Type", "application/json")
+	}
+
+	// 🔴 空のときはヘッダごと付けない。"Bearer " という空のトークンを送ると、
+	// サーバは「トークンを出したが違った」として 401 を返す。付けなければ
+	// 認証を要求していないサーバでは普通に通る（ADR 0020 Decision 3）。
+	if c.token != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.token)
 	}
 
 	return httpReq, nil

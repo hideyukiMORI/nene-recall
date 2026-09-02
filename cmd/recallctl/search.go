@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -42,7 +43,9 @@ type searchRequest struct {
 // 🔴 org_id のフィールドを作らない。サーバも返さない
 // (docs/adr/0003-org-id-is-mandatory.md)。
 type searchResult struct {
-	ChunkID      int64   `json:"chunk_id"`
+	ChunkID int64 `json:"chunk_id"`
+	// ExternalID は外部システム（Corpus）の id。持たない行は null。
+	ExternalID   *int64  `json:"external_id"`
 	DocumentID   int64   `json:"document_id"`
 	SourceID     int64   `json:"source_id"`
 	ChunkIndex   int     `json:"chunk_index"`
@@ -163,11 +166,11 @@ func renderSearch(s streams, resp searchResponse) error {
 	tw := tabwriter.NewWriter(s.out, 0, 0, 2, ' ', 0)
 	out := newTextWriter(tw)
 
-	out.printf("#\tscore\tvector\tlexical\tdoc\tsrc\tidx\tcontent\n")
+	out.printf("#\tscore\tvector\tlexical\text\tdoc\tsrc\tidx\tcontent\n")
 
 	for i, r := range resp.Results {
-		out.printf("%d\t%.4f\t%.4f\t%.4f\t%d\t%d\t%d\t%s\n",
-			i+1, r.Score, r.VectorScore, r.LexicalScore,
+		out.printf("%d\t%.4f\t%.4f\t%.4f\t%s\t%d\t%d\t%d\t%s\n",
+			i+1, r.Score, r.VectorScore, r.LexicalScore, externalIDCell(r.ExternalID),
 			r.DocumentID, r.SourceID, r.ChunkIndex, preview(r.Content))
 	}
 
@@ -182,6 +185,19 @@ func renderSearch(s streams, resp searchResponse) error {
 	newTextWriter(s.err).printf("embedder_id=%s took_ms=%d\n", resp.EmbedderID, resp.TookMS)
 
 	return nil
+}
+
+// externalIDCell は external_id を表の1セルにする。
+//
+// 🔴 null を 0 と書かない。0 は「外部 id が 0 番」と読めてしまい、
+// 「持たない」と区別がつかない。ハイフンは値ではないことが目で分かる
+// (docs/adr/0020-phase2-corpus-integration-contract.md Decision 1)。
+func externalIDCell(id *int64) string {
+	if id == nil {
+		return "-"
+	}
+
+	return strconv.FormatInt(*id, 10)
 }
 
 // preview は本文を表に収まる長さへ切り、改行を空白に潰す。

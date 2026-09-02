@@ -19,7 +19,12 @@ import (
 // 値型にすると 0（未指定）と 0 を明示した場合が区別できない
 // (internal/httpapi/chunks.go と同じ理由)。
 type chunkInput struct {
-	ChunkID      *int64  `json:"chunk_id,omitempty"`
+	ChunkID *int64 `json:"chunk_id,omitempty"`
+	// ExternalID は呼び出し側（Corpus）の id。JSONL に書かれていればそのまま送る。
+	//
+	// 🔴 CLI が値を作らない。0 を補ったり chunk_id から写したりしない
+	// (docs/adr/0020-phase2-corpus-integration-contract.md Decision 1)。
+	ExternalID   *int64  `json:"external_id,omitempty"`
 	DocumentID   int64   `json:"document_id"`
 	SourceID     int64   `json:"source_id"`
 	ChunkIndex   int     `json:"chunk_index"`
@@ -36,12 +41,13 @@ type putChunksRequest struct {
 
 // putChunksResponse は POST /v1/chunks の応答。
 type putChunksResponse struct {
-	Accepted int     `json:"accepted"`
-	ChunkIDs []int64 `json:"chunk_ids"`
+	Accepted    int      `json:"accepted"`
+	ChunkIDs    []int64  `json:"chunk_ids"`
+	ExternalIDs []*int64 `json:"external_ids"`
 }
 
-// deleteBySourceResponse は source 単位の削除の応答。
-type deleteBySourceResponse struct {
+// deleteCountResponse は一括削除の応答。source 単位と document 単位で共通。
+type deleteCountResponse struct {
 	Deleted int `json:"deleted"`
 }
 
@@ -106,10 +112,11 @@ func readChunks(path string, stdin io.Reader) ([]chunkInput, error) {
 
 // parseChunks は1行1件の JSONL を読む。空行は無視する。
 //
-// 🔴 chunk_id が入っていたら送る前に落とす。Phase 1 の契約ではサーバも 400
+// 🔴 chunk_id が入っていたら送る前に落とす。サーバも 400
 // (chunk_id_not_accepted) を返すが、CLI 側で止めるのは、100行のうち 1行だけに
 // 混ざっていた場合に「何行目か」を利用者へ返せるのがここだけだからである。
-// 受け入れ方式は Phase 2 の ADR で決まる（OpenAPI の ChunkInput.chunk_id を参照）。
+// 外部システムの id は external_id で渡す
+// (docs/adr/0020-phase2-corpus-integration-contract.md Decision 1)。
 func parseChunks(r io.Reader) ([]chunkInput, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, initialLineBuffer), maxLineBytes)
@@ -150,7 +157,16 @@ func parseChunkLine(line int, text string) (chunkInput, error) {
 
 	if in.ChunkID != nil {
 		return chunkInput{}, fmt.Errorf(
-			"%w: line %d sets chunk_id; Recall assigns ids in phase 1", errUsage, line)
+			"%w: line %d sets chunk_id; use external_id for your own id "+
+				"(Recall assigns chunk_id itself)", errUsage, line)
+	}
+
+	// 🔴 0 と負値をここで落とす。「外部 id を持たない」はキーの省略で表す。
+	// サーバも 400 を返すが、行番号を言えるのは CLI だけである。
+	if in.ExternalID != nil && *in.ExternalID < 1 {
+		return chunkInput{}, fmt.Errorf(
+			"%w: line %d has external_id %d; it must be a positive integer "+
+				"(omit the key when there is no external id)", errUsage, line, *in.ExternalID)
 	}
 
 	if in.Content == "" {
@@ -232,11 +248,42 @@ func cmdDeleteSource(ctx context.Context, args []string, s streams) error {
 		return err
 	}
 
+	return renderDeleteCount(opts, raw, s)
+}
+
+// cmdDeleteDocument は DELETE /v1/documents/{document_id}/chunks を叩く。
+//
+// source 単位と別に要るのは、Corpus の削除経路が document 単位と source 単位の
+// 2つだからである (docs/adr/0020-phase2-corpus-integration-contract.md Decision 2)。
+func cmdDeleteDocument(ctx context.Context, args []string, s streams) error {
+	opts, id, err := parseIDCommand("delete-document", args, s)
+	if err != nil {
+		return err
+	}
+
+	raw, err := newClient(opts).do(ctx, request{
+		method:         http.MethodDelete,
+		path:           "/v1/documents/" + strconv.FormatInt(id, 10) + "/chunks" + orgQuery(opts),
+		body:           nil,
+		tolerateStatus: 0,
+	})
+	if err != nil {
+		return err
+	}
+
+	return renderDeleteCount(opts, raw, s)
+}
+
+// renderDeleteCount は一括削除の応答を書く。
+//
+// source 単位と document 単位で同じ形にしてある。片方だけ表示が違うと、
+// 呼び出し側（スクリプト）が2つを同じように扱えない。
+func renderDeleteCount(opts options, raw []byte, s streams) error {
 	if opts.asJSON {
 		return writeRaw(s.out, raw)
 	}
 
-	var resp deleteBySourceResponse
+	var resp deleteCountResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return fmt.Errorf("recallctl: decode delete response: %w", err)
 	}

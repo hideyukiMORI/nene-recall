@@ -16,6 +16,7 @@ import (
 const (
 	envURL   = "RECALL_URL"
 	envOrgID = "RECALL_ORG_ID"
+	envToken = "RECALL_TOKEN"
 )
 
 // closedPortURL は誰も待ち受けていない宛先。接続失敗（終了コード 3）を作る。
@@ -29,6 +30,11 @@ type recordedRequest struct {
 	path   string
 	query  string
 	body   string
+	// authorization は受け取った Authorization ヘッダ。付いていなければ空。
+	//
+	// 🔴 「送ったつもりで送っていない」は、認証を要求していないサーバに対しては
+	// 一切症状が出ない。届いたヘッダを記録する以外に確かめる手段が無い。
+	authorization string
 }
 
 // fakeServer は Recall サーバを偽装し、受け取った要求を記録する。
@@ -51,10 +57,11 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	f.requests = append(f.requests, recordedRequest{
-		method: r.Method,
-		path:   r.URL.Path,
-		query:  r.URL.RawQuery,
-		body:   string(raw),
+		method:        r.Method,
+		path:          r.URL.Path,
+		query:         r.URL.RawQuery,
+		body:          string(raw),
+		authorization: r.Header.Get("Authorization"),
 	})
 
 	w.Header().Set("Content-Type", "application/json")
@@ -103,6 +110,7 @@ func runCLI(t *testing.T, stdin string, args ...string) cliResult {
 
 	t.Setenv(envURL, "")
 	t.Setenv(envOrgID, "")
+	t.Setenv(envToken, "")
 
 	return runCLIWithEnv(t, stdin, args...)
 }

@@ -56,13 +56,15 @@ const usage = `recallctl — NeNe Recall の HTTP API を叩くクライアン�
 コマンド:
   search <query...>          チャンクを検索する (POST /v1/search)
   put [file]                 チャンクを投入する (POST /v1/chunks)。JSONL・省略時は標準入力
-  delete <chunk_id>          チャンクを1件削除する (DELETE /v1/chunks/{chunk_id})
-  delete-source <source_id>  source 単位で一括削除する (DELETE /v1/sources/{source_id}/chunks)
-  health                     依存の状態を見る (GET /healthz)
+  delete <chunk_id>            チャンクを1件削除する (DELETE /v1/chunks/{chunk_id})
+  delete-source <source_id>    source 単位で一括削除する (DELETE /v1/sources/{source_id}/chunks)
+  delete-document <doc_id>     document 単位で一括削除する (DELETE /v1/documents/{document_id}/chunks)
+  health                       依存の状態を見る (GET /healthz)
 
 共通フラグ (各コマンドの -h も参照):
   -url      サーバの URL。既定は環境変数 RECALL_URL、無ければ http://127.0.0.1:8080
   -org      org_id。既定は環境変数 RECALL_ORG_ID、無ければ 1
+  -token    Bearer トークン。既定は環境変数 RECALL_TOKEN、無ければ付けない
   -timeout  1リクエストの上限。既定 60s
   -json     サーバ応答の生 JSON をそのまま標準出力へ出す
 
@@ -138,6 +140,8 @@ func dispatch(ctx context.Context, name string, args []string, s streams) error 
 		return cmdDelete(ctx, args, s)
 	case "delete-source":
 		return cmdDeleteSource(ctx, args, s)
+	case "delete-document":
+		return cmdDeleteDocument(ctx, args, s)
 	case "health":
 		return cmdHealth(ctx, args, s)
 	}
