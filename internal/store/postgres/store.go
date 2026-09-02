@@ -130,6 +130,8 @@ func New(db *sql.DB, e embed.Embedder, t lexical.Tokenizer, f Fusion) (*Store, e
 func (s *Store) RankingSettings() RankingSettings {
 	return RankingSettings{
 		Fusion:              s.fusion.String(),
+		Store:               storeName,
+		LexicalScorer:       lexicalScorerName,
 		TsRankNormalization: tsRankNormalization,
 		RRFK:                RRFK,
 	}
