@@ -204,12 +204,34 @@ linters:
             - pkg: "github.com/hideyukiMORI/nene-recall/internal/store"
               desc: "ARC-001: 具体ストアへの依存は cmd の配線点に閉じる。interface 越しに使う。"
 
-    # 🔴 これは許可リストではなく禁止リストである（allowed を書いていないので、
-    # 挙げていない依存は通る）。ARC-004 の「許可制」は ADR で運用する規則であり、
-    # ここが強制するのは「一度禁止したものが戻ってこないこと」だけである。
-    # ⇒ 新しい依存を足すときに書き足す場所は docs/coding-rules.md の ARC-004 と
-    #    ADR であって、ここではない。ここへ書くのは**禁じるとき**である。
+    # 🔴 ARC-004（外部依存は許可制）を機械化したもの。allowed に挙げていない
+    # モジュールを import すると lint が落ちる。
+    #
+    # 🔑 2026-09-02（PR #12）に禁止リストから許可リストへ変えた。禁止リストだけ
+    # だった間、機械が止めていたのは「一度禁止したものの再導入」だけで、
+    # **新しい依存の追加そのものは止まっていなかった**。ARC-004 が「許可制」を
+    # 名乗る以上、機械の側もそうでなければ規約が実態と食い違う。
+    #
+    # 🔴 依存を足すときは (1) ADR を書き (2) ここに1行足し
+    #    (3) docs/coding-rules.md ARC-004 の表に1行足す。3つが揃う。
+    #    ここだけ足して ADR を書かない、が起きないようにするのがレビューの仕事。
+    #
+    # ⚠️ allowed.modules は**直接 import するモジュール**だけを挙げる。間接依存
+    # （modernc.org/libc など）は自分のコードが import しないので gomodguard の
+    # 対象にならない。go.mod の indirect ブロックを写す必要は無い。
     gomodguard_v2:
+      allowed:
+        # ドライバは pgx に統一する（ADR 0011）。import しているのは
+        # サブパッケージ pgx/v5/stdlib だが、gomodguard が見るのはモジュールである。
+        - module: github.com/jackc/pgx/v5
+        # NFKC 正規化。internal/lexical/bigram が使う（ADR 0014）。
+        - module: golang.org/x/text
+        # SQLite ドライバ。純 Go・比較実測用のストア（ADR 0017）。
+        - module: modernc.org/sqlite
+      # 🔴 禁止リストは許可リストがあっても残す。allowed に無ければどのみち
+      # 落ちるので機能としては冗長だが、落ちたときのメッセージが
+      # 「許可されていない」ではなく「**なぜ却下したか**」になる。
+      # 却下の理由は、次に同じ提案をする人が読むべき情報である。
       blocked:
         - module: github.com/lib/pq
           recommendations: ["github.com/jackc/pgx/v5"]

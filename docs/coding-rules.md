@@ -264,19 +264,35 @@ cmd/recall ──▶ internal/httpapi ──▶ internal/index (契約) ◀─�
 | 依存 | 用途 | 根拠 |
 | --- | --- | --- |
 | `github.com/jackc/pgx/v5` | PostgreSQL ドライバ（`database/sql` 経由） | [ADR 0011](adr/0011-pgx-stdlib-driver.md) |
-| `golang.org/x/text` | NFKC 正規化（`internal/lexical/bigram`） | PR #7（語彙検索の導入） |
+| `golang.org/x/text` | NFKC 正規化（`internal/lexical/bigram`） | [ADR 0014](adr/0014-lexical-search-is-tsvector-over-bigram.md) |
 | `modernc.org/sqlite` | SQLite ドライバ（純 Go・比較実測用のストア） | [ADR 0017](adr/0017-sqlite-store-for-comparison.md) |
 
-新しい依存を足すときは ADR を1本立て、この表に行を足す。
+新しい依存を足すときは、次の3つを揃える。**1つでも欠けたら足していない。**
 
-🔴 `.golangci.yml` の `gomodguard_v2` は**禁止リストであって許可リストではない**
-（`allowed` を書いていないので、挙げていない依存は lint を通る）。つまり
-機械が止めるのは「一度禁止したものの再導入」だけで、**新しい依存の追加そのものは
-止まらない**。「lint が通ったから許可された」と読まないこと。許可制を実際に
-支えているのは、この表と ADR とレビューである。
+1. ADR を1本立てる
+2. `.golangci.yml` の `gomodguard_v2.allowed` に1行足す
+3. この表に1行足す
 
-- 機械強制: **active**（`gomodguard_v2`。ただし止めるのは禁止済みの依存の
-  再導入だけで、新規依存の追加は止めない。上の🔴を参照）
+🔴 **`gomodguard_v2` を許可リスト方式に変えた（2026-09-02・PR #12）。**
+`allowed` に挙がっていないモジュールを import すると `make check` が落ちる。
+実測で両方向を確認済み——未掲載のモジュールを import すると落ち、掲載を1行
+消すと既存の import が落ちる。
+
+🔑 **それ以前は禁止リストだけだった。** そのとき機械が止めていたのは
+「一度禁止したものの再導入」だけで、**新しい依存の追加そのものは止まって
+いなかった**。「許可制」を名乗る規則の強制が実は禁止制だった、という食い違いで
+ある。ゲートを**強める**変更なので ADR は要らない（QLT-005 が ADR を要求するのは
+弱める変更）。
+
+⚠️ `allowed` に挙げるのは**自分のコードが直接 import するモジュール**だけである。
+間接依存（`modernc.org/libc` など）は import しないので対象にならない。
+`go.mod` の `// indirect` ブロックを写す必要は無い。
+
+⚠️ 許可リストがあれば禁止リストは機能としては冗長だが、**残してある**。
+落ちたときのメッセージが「許可されていない」ではなく「**なぜ却下したか**」に
+なるためで、却下の理由は次に同じ提案をする人が読むべき情報である。
+
+- 機械強制: **active**（`gomodguard_v2` の `allowed`）
 
 ### ARC-005 — プロセス環境に触るのは配線点だけ
 
