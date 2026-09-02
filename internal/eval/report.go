@@ -113,11 +113,12 @@ type Conditions struct {
 	OrgID org.ID `json:"org_id"`
 	// Alpha は合成の重み。
 	Alpha float32 `json:"alpha"`
-	// AlphaNote は alpha の根拠の有無。
+	// AlphaNote は alpha の読み方の但し書き。
 	//
-	// 🔴 数字だけを載せると、読んだ人はそれが調整済みの値だと受け取る。
-	// 0.7 に根拠は無い（要件定義 Q-3）。レポートはそれ自体で読まれるので、
-	// 但し書きを外部の文書に頼らない。
+	// 🔴 数字だけを載せると、読んだ人はそれが普遍的に調整済みの値だと受け取る。
+	// 既定 0.8 は ADR 0015 が実測から選んだ値だが、正規化方式・分割器・埋め込み
+	// モデル・候補集合の作り方に依存する条件付きの値である（ADR 0015 Decision 3）。
+	// レポートはそれ自体で読まれるので、但し書きを外部の文書に頼らない。
 	AlphaNote string `json:"alpha_note"`
 	// Limit は1クエリあたりの取得件数。
 	Limit int `json:"limit"`

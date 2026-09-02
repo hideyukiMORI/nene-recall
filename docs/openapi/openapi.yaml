@@ -160,12 +160,13 @@ components:
         alpha:
           type: number
           format: float
-          default: 0.7
+          default: 0.8
           minimum: 0
           maximum: 1
           description: |
             合成の重み。`score = alpha * vector_score + (1 - alpha) * lexical_score`。
             1.0 で純ベクトル、0.0 で純語彙。
+            既定 0.8 の根拠は ADR 0015（2026-09-02 の実測で選んだ条件付きの値。最適値ではない）。
         filters:
           $ref: '#/components/schemas/SearchFilters'
 

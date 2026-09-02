@@ -18,10 +18,11 @@
 単体で完結して動く。同時に、将来 [NeNe Corpus](https://github.com/hideyukiMORI/nene-corpus) の
 検索バックエンドとして環境変数ひとつで差し替えられる形を最初から取っている。
 
-> **Status: alpha。** **ベクトル検索が動く。** `/v1/chunks` の投入・削除と `/v1/search` が
+> **Status: alpha。** **ハイブリッド検索が動く。** `/v1/chunks` の投入・削除と `/v1/search` が
 > ローカルの bge-m3 + pgvector で実際に動作する。検索品質を測る `make eval` も動き、
-> ベクトル検索のみの基準線は `recall@10` **0.596**（259チャンク・58クエリの日本語評価セット）。
-> **語彙検索とハイブリッド合成（要件 F-4）は実装中**で、現在 `lexical_score` は常に 0。
+> 259チャンク・58クエリの日本語評価セットで `recall@10` は
+> ベクトルのみの **0.596** から、語彙検索を足したハイブリッドで **0.724** になった
+> （`alpha=0.8`・[ADR 0015](docs/adr/0015-fusion-is-weighted-sum-with-alpha-0.8.md)）。
 
 ---
 
@@ -75,6 +76,8 @@ Recall が置き換える相手は「まだ RAG になっていないもの」�
 | **埋め込みはローカル既定（Ollama + bge-m3）** | ローカル利用が要件。RTX 3090 が使える。費用0円（[ADR 0008](docs/adr/0008-local-embedding-by-default.md)） |
 | **検索品質の評価を Phase 1 の必須要件に** | ベクトル DB 選定はもう差別化にならない。測ることが差別化（[ADR 0009](docs/adr/0009-retrieval-evaluation-is-in-scope.md)） |
 | **厳格性は文章でなく機械で強制する** | Go はゼロ値・不変性・網羅性を言語で縛れない。落ちる仕組みにする（[ADR 0010](docs/adr/0010-strictness-is-mechanically-enforced.md)） |
+| **語彙検索は Go 側 bigram + `tsvector`** | 分割規則を Go 側に1つだけ置く。`ts_rank` の長さ正規化は実測で有害だった（[ADR 0014](docs/adr/0014-lexical-search-is-tsvector-over-bigram.md)） |
+| **合成は加重和・`alpha` 既定 0.8** | 語彙スコアをクエリ内で正規化しないと合成は機能しない。0.8 はプラトーの中心（[ADR 0015](docs/adr/0015-fusion-is-weighted-sum-with-alpha-0.8.md)） |
 
 > ⚠️ [ADR 0004](docs/adr/0004-brute-force-cosine-no-vector-db.md)（総当たり・ベクトル DB 不使用）は
 > ADR 0007 が supersede した。**ただしその性能分析は今も有効**——10万件規模では総当たりで足りる。

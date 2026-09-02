@@ -66,8 +66,10 @@ type searchResponse struct {
 // toQuery は要求を検証して index.Query に変換する。
 //
 // defaultAlpha は設定由来の既定値。
-// 🔴 この値が「調整済み」であるかのように扱わないこと。根拠はまだ無く、
-// ADR 0009 の評価セットで最適値を決めるまでは暫定である（要件定義 Q-3）。
+// 🔴 この値を「最適値」として扱わないこと。既定 0.8 は ADR 0015 が
+// 2026-09-02 の評価セット・bge-m3:1024・bigram・クエリ内正規化という
+// 条件のもとで選んだ値であり、条件が変われば測り直す対象である
+// （ADR 0015 Decision 3）。
 func (req searchRequest) toQuery(defaultAlpha float32) (index.Query, error) {
 	orgID, err := requireBodyOrgID(req.OrgID)
 	if err != nil {
@@ -197,8 +199,9 @@ func resolveLimit(raw *int) (int, error) {
 
 // resolveAlpha は alpha の既定値と範囲を解決する。
 //
-// 🔴 fallback は設定由来の暫定値である。根拠はまだ無く、ADR 0009 の評価セットで
-// 最適値を決めるまでは暫定のままである（要件定義 Q-3）。「調整済み」として扱わない。
+// 🔴 fallback は設定由来の既定値である。ADR 0015 が実測から選んだ値だが、
+// それは測ったときの条件付きの値であって「最適値」ではない（ADR 0015 Decision 3）。
+// 要求ごとに alpha を上書きできる契約は、この条件依存性の裏返しである。
 func resolveAlpha(raw *float32, fallback float32) (float32, error) {
 	if raw == nil {
 		return fallback, nil

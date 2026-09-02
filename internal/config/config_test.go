@@ -57,7 +57,7 @@ func TestLoadAppliesDocumentedDefaults(t *testing.T) {
 		t.Errorf("EmbedDimensions = %d, want %d", got, want)
 	}
 
-	if got, want := cfg.DefaultAlpha, float32(0.7); got != want {
+	if got, want := cfg.DefaultAlpha, float32(0.8); got != want {
 		t.Errorf("DefaultAlpha = %v, want %v", got, want)
 	}
 }
@@ -123,7 +123,7 @@ func baseConfig() config.Config {
 		EmbedDimensions: 1024,
 		OllamaBaseURL:   "http://localhost:11434",
 		VoyageAPIKey:    "",
-		DefaultAlpha:    0.7,
+		DefaultAlpha:    0.8,
 	}
 }
 
