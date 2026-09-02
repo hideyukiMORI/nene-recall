@@ -235,6 +235,8 @@ cmd/recall ──▶ internal/httpapi ──▶ internal/index (契約) ◀─�
 | `internal/store/postgres` | 実装 | 対象外（`database/sql` 可） | `store-is-wired-only-in-cmd` |
 | `internal/embed` | 契約 | 対象 | — |
 | `internal/embed/ollama` | 実装 | 対象外（`net/http`・`time` 可） | `embedder-is-wired-only-in-cmd` |
+| `internal/lexical` | 契約 | 対象 | — |
+| `internal/lexical/bigram`・`internal/lexical/kagome` | 実装 | 対象外（`golang.org/x/text`・辞書 可） | 配線点でのみ選ぶ（`RECALL_TOKENIZER`） |
 
 実装が中核の制約を免れるのではない。**制約の種類が変わる**——純粋性の代わりに
 「具体実装を知ってよいのは配線点（`cmd`）だけ」という依存方向の制限を受ける。
@@ -266,6 +268,12 @@ cmd/recall ──▶ internal/httpapi ──▶ internal/index (契約) ◀─�
 | `github.com/jackc/pgx/v5` | PostgreSQL ドライバ（`database/sql` 経由） | [ADR 0011](adr/0011-pgx-stdlib-driver.md) |
 | `golang.org/x/text` | NFKC 正規化（`internal/lexical/bigram`） | [ADR 0014](adr/0014-lexical-search-is-tsvector-over-bigram.md) |
 | `modernc.org/sqlite` | SQLite ドライバ（純 Go・比較実測用のストア） | [ADR 0017](adr/0017-sqlite-store-for-comparison.md) |
+| `github.com/ikawaha/kagome/v2` | 形態素解析（純 Go・`internal/lexical/kagome`・比較実測用の分割器） | [ADR 0018](adr/0018-morphological-tokenizer-as-measured-alternative.md) |
+| `github.com/ikawaha/kagome-dict/ipa` | 上の IPA 辞書（バイナリ埋め込み・別モジュール） | [ADR 0018](adr/0018-morphological-tokenizer-as-measured-alternative.md) |
+
+⚠️ `.golangci.yml` の `allowed` には `github.com/ikawaha/kagome-dict` も1行要る。
+`gomodguard` が import パス `.../kagome-dict/ipa` のモジュールを**親側として解決する**
+ためで（実測）、自分のコードが import しているのは `/ipa` だけである。
 
 新しい依存を足すときは、次の3つを揃える。**1つでも欠けたら足していない。**
 
