@@ -161,6 +161,13 @@ HNSW を入れるときは、**同じ評価セット（同じ sha256）で befor
 両方をここに残す**。ADR 0007 の価値は「pgvector を選んだこと」ではなく
 「測ってから索引を入れた経路」なので、before が無ければその価値は消える。
 
+10万件規模の before / after は測って残してある。
+
+| | 文書 | ラベルの接頭辞 |
+| --- | --- | --- |
+| before（索引なし・全探索） | [`../2026-09-02-eval-100k-before-index.md`](../2026-09-02-eval-100k-before-index.md) | `100k-hybrid` / `100k-vector-only` / `100k-lexical-only` |
+| after（HNSW + GIN・候補モード） | [`../2026-09-02-eval-100k-after-index.md`](../2026-09-02-eval-100k-after-index.md) | `100k-cand-*` / `259-cand-*` / `259-exh-*` |
+
 比較対象の **Go 側総当たり（SQLite）** も同じ評価セットで測って並べる。
 ADR 0007 はこの比較そのものを成果物に数えている（Phase 1 項目8 / ADR 0017）。
 
