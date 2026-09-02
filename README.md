@@ -78,6 +78,7 @@ Recall が置き換える相手は「まだ RAG になっていないもの」�
 | **厳格性は文章でなく機械で強制する** | Go はゼロ値・不変性・網羅性を言語で縛れない。落ちる仕組みにする（[ADR 0010](docs/adr/0010-strictness-is-mechanically-enforced.md)） |
 | **語彙検索は Go 側 bigram + `tsvector`** | 分割規則を Go 側に1つだけ置く。`ts_rank` の長さ正規化は実測で有害だった（[ADR 0014](docs/adr/0014-lexical-search-is-tsvector-over-bigram.md)） |
 | **合成は加重和・`alpha` 既定 0.8** | 語彙スコアをクエリ内で正規化しないと合成は機能しない。0.8 はプラトーの中心（[ADR 0015](docs/adr/0015-fusion-is-weighted-sum-with-alpha-0.8.md)） |
+| **分割器の既定は bigram のまま。形態素（kagome）は選択肢** | 同一条件の実測で `paraphrase` +0.18 と `orthography` −0.18 が相殺。優位が無いとき既定は変えない（[ADR 0021](docs/adr/0021-q2-bigram-stays-default.md)） |
 
 > ⚠️ [ADR 0004](docs/adr/0004-brute-force-cosine-no-vector-db.md)（総当たり・ベクトル DB 不使用）は
 > ADR 0007 が supersede した。**ただしその性能分析は今も有効**——10万件規模では総当たりで足りる。
