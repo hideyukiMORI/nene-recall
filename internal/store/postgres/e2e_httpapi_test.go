@@ -33,6 +33,7 @@ func newE2EServer(t *testing.T, ts *testStore) http.Handler {
 		Store:           config.StorePostgres,
 		DatabaseURL:     testDSN(testDBName()),
 		DBPath:          "recall.db",
+		Tokenizer:       config.TokenizerBigram,
 		EmbedProvider:   config.EmbedProviderOllama,
 		EmbedModel:      "fake",
 		EmbedDimensions: 1024,

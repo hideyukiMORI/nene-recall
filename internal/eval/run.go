@@ -123,8 +123,9 @@ type Options struct {
 	// Ranking はストアが順位付けに使った条件。レポートにそのまま載る。
 	//
 	// 🔴 internal/eval はこの中身を解釈しない。具体ストアを知らない層なので
-	// (ARC-001)、配線点 (cmd/eval) が集めて渡す。空の Fusion は拒否する——
-	// 条件の記録が欠けたレポートは後から条件を特定できない。
+	// (ARC-001)、配線点 (cmd/eval) が集めて渡す。空の Fusion と空の
+	// TokenizerID は拒否する——条件の記録が欠けたレポートは後から条件を
+	// 特定できない。
 	Ranking RankingSettings
 }
 
@@ -226,6 +227,11 @@ func (o Options) validate() error {
 		return fmt.Errorf("%w: alpha must be within [0,1], got %v", ErrMeasure, o.Alpha)
 	case o.Ranking.Fusion == "":
 		return fmt.Errorf("%w: the ranking settings must record a fusion method", ErrMeasure)
+	// 🔴 分割器は語彙スコアの入力そのものを変える。記録が無いレポートは
+	// 「bigram で測ったのか形態素で測ったのか」を後から特定できず、Q-2 の
+	// 判断材料にならない (ADR 0018 Decision 3)。融合方式と同じ扱いにする。
+	case o.Ranking.TokenizerID == "":
+		return fmt.Errorf("%w: the ranking settings must record a tokenizer id", ErrMeasure)
 	case o.AlphaNote == "":
 		return fmt.Errorf("%w: the conditions must carry a note on how to read alpha", ErrMeasure)
 	}

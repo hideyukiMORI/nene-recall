@@ -3,7 +3,9 @@ package sqlite_test
 import (
 	"testing"
 
+	"github.com/hideyukiMORI/nene-recall/internal/lexical"
 	"github.com/hideyukiMORI/nene-recall/internal/lexical/bigram"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical/kagome"
 	"github.com/hideyukiMORI/nene-recall/internal/store/sqlite"
 )
 
@@ -21,6 +23,31 @@ import (
 // 🔑 postgres 側の lexeme_roundtrip_test.go と対になる。あちらは
 // to_tsvector('simple') の再パース、こちらは FTS5 の ascii トークナイザという、
 // 別の関数に対する同じ観点である。
+//
+// 🔴 往復同一性は分割器ごとに確かめる。ADR 0018 で分割器が2つになった以上、
+// 片方だけで往復を見ても、もう片方が ascii トークナイザと噛み合っているかは
+// 分からない。
+
+// roundTripTokenizer は往復同一性を確かめる分割器1つ。
+type roundTripTokenizer struct {
+	name      string
+	tokenizer lexical.Tokenizer
+}
+
+// roundTripTokenizers は実物の分割器を両方返す。
+func roundTripTokenizers(t *testing.T) []roundTripTokenizer {
+	t.Helper()
+
+	morphological, err := kagome.New()
+	if err != nil {
+		t.Fatalf("kagome.New(): %v", err)
+	}
+
+	return []roundTripTokenizer{
+		{name: "bigram", tokenizer: bigram.New()},
+		{name: "kagome", tokenizer: morphological},
+	}
+}
 
 // TestLexemeRoundTripMatchesItsOwnQuery は、取り込んだ本文が、同じ分割器で
 // 作った検索式に必ず一致することを確かめる。
@@ -28,12 +55,6 @@ import (
 // 🔑 これが往復同一性の本体である。「索引側と検索側が噛み合うか」は、片側だけ
 // 囲みを外すといった変更で静かに壊れる。本文で引ける、を直接見る。
 func TestLexemeRoundTripMatchesItsOwnQuery(t *testing.T) {
-	ts := newTestStoreWith(t, storeSpec{
-		embedder:  newFakeEmbedder("fake:1024"),
-		tokenizer: bigram.New(),
-	})
-	orgA := mustOrgID(t, 1)
-
 	contents := []string{
 		"RECALL_STORE は postgres と sqlite を切り替える",
 		"pgvector 0.8.6 で測った",
@@ -44,21 +65,73 @@ func TestLexemeRoundTripMatchesItsOwnQuery(t *testing.T) {
 		"サーバーの応答時間を測る",
 	}
 
-	tokenizer := bigram.New()
+	for _, tc := range roundTripTokenizers(t) {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := newTestStoreWith(t, storeSpec{
+				embedder:  newFakeEmbedder("fake:1024"),
+				tokenizer: tc.tokenizer,
+			})
 
-	for i, content := range contents {
-		id := putContent(t, ts, chunkSpec{
-			orgID: orgA, documentID: 1, sourceID: 1, chunkIndex: i, content: content,
+			for i, content := range contents {
+				assertMatchesItsOwnQuery(t, ts, tc.tokenizer, chunkSpec{
+					orgID: mustOrgID(t, 1), documentID: 1, sourceID: 1,
+					chunkIndex: i, content: content,
+				})
+			}
 		})
+	}
+}
 
-		expression, err := sqlite.EncodeMatchExpression(tokenizer.Tokenize(content))
-		if err != nil {
-			t.Fatalf("EncodeMatchExpression: %v", err)
-		}
+// assertMatchesItsOwnQuery は本文1件を取り込み、同じ分割器で作った検索式で
+// 引けることを確かめる。
+func assertMatchesItsOwnQuery(
+	t *testing.T, ts *testStore, tokenizer lexical.Tokenizer, spec chunkSpec,
+) {
+	t.Helper()
 
-		if !matchesQuery(t, ts, id, expression) {
-			t.Errorf("本文 %q が自分自身から作った検索式に一致しない（往復が閉じていない）", content)
+	id := putContent(t, ts, spec)
+
+	expression, err := sqlite.EncodeMatchExpression(tokenizer.Tokenize(spec.content))
+	if err != nil {
+		t.Fatalf("EncodeMatchExpression: %v", err)
+	}
+
+	if !matchesQuery(t, ts, id, expression) {
+		t.Errorf("本文 %q が自分自身から作った検索式に一致しない（往復が閉じていない）", spec.content)
+	}
+}
+
+// TestLexemeRoundTripKeepsMorphemesIntact は、Go が切った形態素が FTS5 側で
+// 再分割されないことを確かめる。
+//
+// 🔑 tokenize='ascii' を選んだ理由 (ADR 0017 Decision 3) は bigram だけの
+// 都合ではない。unicode61 なら「切り替える」も日本語の分類で割られ、原形に
+// 畳んだ意味が消える。分割器が増えた以上、両方で見る。
+func TestLexemeRoundTripKeepsMorphemesIntact(t *testing.T) {
+	morphological, err := kagome.New()
+	if err != nil {
+		t.Fatalf("kagome.New(): %v", err)
+	}
+
+	ts := newTestStoreWith(t, storeSpec{
+		embedder:  newFakeEmbedder("fake:1024"),
+		tokenizer: morphological,
+	})
+	orgA := mustOrgID(t, 1)
+
+	id := putContent(t, ts, chunkSpec{
+		orgID: orgA, documentID: 1, sourceID: 1, chunkIndex: 0, content: "検索対象を切り替える",
+	})
+
+	for _, token := range morphological.Tokenize("検索対象を切り替える") {
+		if !matchesQuery(t, ts, id, `"`+token+`"`) {
+			t.Errorf("🔴 形態素 %q が FTS5 の中で再分割されている", token)
 		}
+	}
+
+	// 「索」1文字だけでは当たらない。当たるなら文字単位に割れている。
+	if matchesQuery(t, ts, id, `"索"`) {
+		t.Errorf("🔴 CJK が1文字ずつに割れている（ascii トークナイザが効いていない）")
 	}
 }
 
@@ -102,6 +175,10 @@ func TestLexemeRoundTripKeepsCJKBigramsIntact(t *testing.T) {
 // （RECALL_STORE・正解4件）を救うのはこの精度であり、ここが緩むと語彙検索は
 // 偽ヒットで recall を下げる方向に働く。postgres 側の 'recall' <-> 'store' と
 // 同じ性質を、別の方言で確かめている。
+//
+// 🔴 bigram 限定である。形態素側では同じ囮に当たる——理由と実測は postgres 側の
+// TestLexemeRoundTripLosesAdjacencyWithMorphemes にある（機能語を捨てると、
+// 離れていた語がトークン列の上で隣接する）。方言が違っても原因は同じである。
 func TestLexemeRoundTripKeepsIdentifiersPrecise(t *testing.T) {
 	ts := newTestStoreWith(t, storeSpec{
 		embedder:  newFakeEmbedder("fake:1024"),

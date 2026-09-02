@@ -21,7 +21,9 @@ import (
 	"github.com/hideyukiMORI/nene-recall/internal/embed/ollama"
 	"github.com/hideyukiMORI/nene-recall/internal/httpapi"
 	"github.com/hideyukiMORI/nene-recall/internal/index"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical"
 	"github.com/hideyukiMORI/nene-recall/internal/lexical/bigram"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical/kagome"
 	"github.com/hideyukiMORI/nene-recall/internal/store/postgres"
 	"github.com/hideyukiMORI/nene-recall/internal/store/sqlite"
 )
@@ -50,6 +52,12 @@ var errVoyageNotImplemented = errors.New("recall: the voyage embedder is not imp
 // config.validateStore が既に弾いているので、通常はここへ来ない。番人が
 // 無いと「どのストアも組み立てられなかった」が nil のストアとして先へ進む。
 var errUnknownStore = errors.New("recall: unknown store")
+
+// errUnknownTokenizer は設定が未知の分割器を指していることを表す。
+//
+// config.validateTokenizer が既に弾いているので、通常はここへ来ない。
+// errUnknownStore と同じく、番人が無いと nil の分割器で先へ進む。
+var errUnknownTokenizer = errors.New("recall: unknown tokenizer")
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -90,10 +98,15 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
+	tokenizer, err := buildTokenizer(cfg)
+	if err != nil {
+		return err
+	}
+
 	migrateCtx, cancelMigrate := context.WithTimeout(context.Background(), migrateTimeout)
 	defer cancelMigrate()
 
-	store, err := buildStore(migrateCtx, cfg, bundle.embedder)
+	store, err := buildStore(migrateCtx, cfg, bundle.embedder, tokenizer)
 	if err != nil {
 		return err
 	}
@@ -116,6 +129,10 @@ func run(log *slog.Logger) error {
 		slog.String("addr", cfg.Addr),
 		slog.String("store", string(cfg.Store)),
 		slog.String("embedder_id", cfg.EmbedderID()),
+		// 🔴 分割器の識別子を出す。取り込み済みのデータがどの規則で分割された
+		// ものかは tokenizer_id が決めており、切り替えたことに気づかないまま
+		// 起動すると最初の検索が不一致エラーで落ちる（ADR 0018）。
+		slog.String("tokenizer_id", tokenizer.ID()),
 		slog.String("ollama_url", cfg.OllamaBaseURL),
 	)
 
@@ -155,6 +172,30 @@ func buildEmbedder(cfg config.Config) (embedderBundle, error) {
 	return embedderBundle{}, fmt.Errorf("%w: %q", errVoyageNotImplemented, cfg.EmbedProvider)
 }
 
+// buildTokenizer は設定から語彙分割器を組み立てる。
+//
+// 🔴 既定は bigram である。kagome は比較実測のために選べる経路であって、
+// 既定を移すのは実測を見て ADR を書いてからである (ADR 0018)。
+//
+// ⚠️ kagome.New だけが error を返す。辞書の読み込みを含むためで、契約
+// (lexical.Tokenizer) の違いではない。この非対称はこの関数1つに閉じる。
+func buildTokenizer(cfg config.Config) (lexical.Tokenizer, error) {
+	switch cfg.Tokenizer {
+	case config.TokenizerBigram:
+		return bigram.New(), nil
+	case config.TokenizerKagome:
+		morphological, err := kagome.New()
+		if err != nil {
+			return nil, fmt.Errorf("build kagome tokenizer: %w", err)
+		}
+
+		return morphological, nil
+	}
+
+	// config.validate が未知の値を既に拒否しているので、ここへは来ない。
+	return nil, fmt.Errorf("%w: %q", errUnknownTokenizer, cfg.Tokenizer)
+}
+
 // backingStore は配線点が扱うストアの口。
 //
 // 🔴 internal/index に足さない。Ping と Close は「検索する」「書き込む」という
@@ -179,12 +220,14 @@ type backingStore interface {
 //
 // 🔴 既定は postgres である。sqlite は比較実測のために選べる経路であって、
 // 既定を移すのは実測を見て ADR を書いてからである (ADR 0007 / ADR 0017)。
-func buildStore(ctx context.Context, cfg config.Config, embedder embed.Embedder) (backingStore, error) {
+func buildStore(
+	ctx context.Context, cfg config.Config, embedder embed.Embedder, tokenizer lexical.Tokenizer,
+) (backingStore, error) {
 	switch cfg.Store {
 	case config.StorePostgres:
-		return openPostgres(ctx, cfg, embedder)
+		return openPostgres(ctx, cfg, embedder, tokenizer)
 	case config.StoreSQLite:
-		return openSQLite(ctx, cfg, embedder)
+		return openSQLite(ctx, cfg, embedder, tokenizer)
 	}
 
 	// config.validate が未知の値を既に拒否しているので、ここへは来ない。
@@ -192,7 +235,9 @@ func buildStore(ctx context.Context, cfg config.Config, embedder embed.Embedder)
 }
 
 // openPostgres は接続を開き、次元の突き合わせとマイグレーションを行う。
-func openPostgres(ctx context.Context, cfg config.Config, embedder embed.Embedder) (backingStore, error) {
+func openPostgres(
+	ctx context.Context, cfg config.Config, embedder embed.Embedder, tokenizer lexical.Tokenizer,
+) (backingStore, error) {
 	db, err := postgres.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
@@ -204,7 +249,7 @@ func openPostgres(ctx context.Context, cfg config.Config, embedder embed.Embedde
 	// 「既定がどちらか」がコードから読めなくなる。加重和は要件定義 F-4 と
 	// OpenAPI が定める契約そのものなので、サーバはこれを使う。方式を変えるのは
 	// 実測を見て ADR を書いてからである。
-	store, err := postgres.New(db, embedder, bigram.New(), postgres.FusionWeightedSum)
+	store, err := postgres.New(db, embedder, tokenizer, postgres.FusionWeightedSum)
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("build store: %w", err), db.Close())
 	}
@@ -224,13 +269,15 @@ func openPostgres(ctx context.Context, cfg config.Config, embedder embed.Embedde
 //
 // 🔴 融合方式を引数に取らない。sqlite 側は加重和しか実装していないので、
 // 選べるかのような口を配線点に開けない (ADR 0017 Decision 4)。
-func openSQLite(ctx context.Context, cfg config.Config, embedder embed.Embedder) (backingStore, error) {
+func openSQLite(
+	ctx context.Context, cfg config.Config, embedder embed.Embedder, tokenizer lexical.Tokenizer,
+) (backingStore, error) {
 	db, err := sqlite.Open(ctx, cfg.DBPath)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	store, err := sqlite.New(db, embedder, bigram.New())
+	store, err := sqlite.New(db, embedder, tokenizer)
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("build store: %w", err), db.Close())
 	}

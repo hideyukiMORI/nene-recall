@@ -228,6 +228,18 @@ linters:
         - module: golang.org/x/text
         # SQLite ドライバ。純 Go・比較実測用のストア（ADR 0017）。
         - module: modernc.org/sqlite
+        # 形態素解析器。純 Go・cgo なし。internal/lexical/kagome が使う（ADR 0018）。
+        # 既定は bigram のままで、これは比較対象として入っている。
+        - module: github.com/ikawaha/kagome/v2
+        # 形態素解析の IPA 辞書。バイナリに埋め込まれる（外部ファイルを置かない）。
+        # kagome/v2 とは別モジュールなので、許可も1行ずつ要る（ADR 0018）。
+        #
+        # ⚠️ 2行あるのは、gomodguard が import パス github.com/ikawaha/kagome-dict/ipa の
+        # モジュールを親側 (github.com/ikawaha/kagome-dict) として解決するため（実測）。
+        # 実際に import しているのは /ipa だけで、親は go.mod でも indirect である。
+        # 片方だけ挙げると lint が落ちる。
+        - module: github.com/ikawaha/kagome-dict/ipa
+        - module: github.com/ikawaha/kagome-dict
       # 🔴 禁止リストは許可リストがあっても残す。allowed に無ければどのみち
       # 落ちるので機能としては冗長だが、落ちたときのメッセージが
       # 「許可されていない」ではなく「**なぜ却下したか**」になる。

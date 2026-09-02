@@ -28,7 +28,7 @@ make eval EVAL_LABEL=baseline GPU_NOTE="他アプリが 5.7GB 使用中"
 | --- | --- |
 | 環境 | git revision / 未コミット変更の有無・Go 版・`embedder_id`・**Ollama の版とモデル digest**・PostgreSQL と pgvector の版・**SQLite の版**・GPU 占有の自己申告 |
 | 入力の同一性 | 3ファイルの **sha256** と件数 |
-| 条件 | `alpha`（10進・v4 から `float64`）・`limit`・`rounds`・ウォームアップ周回数・`k` 値・**パーセンタイルの定義**・**順位付けの条件**（`ranking`: **バックエンド**・**語彙採点関数**・融合方式、および postgres でのみ `ts_rank` の正規化フラグと RRF の `k`） |
+| 条件 | `alpha`（10進・v4 から `float64`）・`limit`・`rounds`・ウォームアップ周回数・`k` 値・**パーセンタイルの定義**・**順位付けの条件**（`ranking`: **バックエンド**・**語彙採点関数**・**分割器の識別子**・融合方式、および postgres でのみ `ts_rank` の正規化フラグと RRF の `k`） |
 | per-query の生データ | 上位の並び（`eval_key` と**3つのスコア**）・正解ごとの順位（圏外は `null`）・ラウンドごとの latency 2系統 |
 | 集計値 | `recall@1/5/10`・`MRR`・p50/p95（2系統）・タグ別 `recall`・**micro 内訳**・**gold 長さ別の内訳**・**名指しの長文チャンクの追跡** |
 
@@ -43,6 +43,7 @@ make eval EVAL_LABEL=baseline GPU_NOTE="他アプリが 5.7GB 使用中"
 | `nene-recall/eval-report/v2` | 2026-09-02 | 語彙検索の実装に合わせて拡張 |
 | `nene-recall/eval-report/v3` | 2026-09-02 | 比較用の SQLite ストアに合わせて拡張 |
 | `nene-recall/eval-report/v4` | 2026-09-02 | `conditions` をストア非依存で正確にした |
+| `nene-recall/eval-report/v5` | 2026-09-02 | 分割器を条件に記録した（形態素の導入・ADR 0018） |
 
 v2 で変えたのは3点。
 
@@ -160,3 +161,23 @@ HNSW を入れるときは、**同じ評価セット（同じ sha256）で befor
 
 比較対象の **Go 側総当たり（SQLite）** も同じ評価セットで測って並べる。
 ADR 0007 はこの比較そのものを成果物に数えている（Phase 1 項目8 / ADR 0017）。
+
+## v5 — 分割器を条件に記録する（2026-09-02・ADR 0018）
+
+変えたのは1点。**`conditions.ranking` に `tokenizer_id` が増えた**
+（例 `"bigram:nfkc-lower:v1"` / `"kagome:ipadic:ascii-words:v1"`）。
+
+🔴 **項目を1つ足しただけでも版を上げる。** 上げないと「`tokenizer_id` の無い
+レポート」が2つの意味を持つ——様式が古いのか、その実行で記録しなかったのか、
+読む側から区別できない。v2 と v3 も純粋な追加で上げている。
+
+🔴 **v4 以前のレポートは分割器を記録していないが、すべて bigram で測っている。**
+形態素分割器が入ったのが v5 と同じコミットなので、それ以前に選択肢は無かった。
+
+⚠️ **`alpha` の但し書きが分割器でも変わる。** ADR 0015 が 0.8 を選んだ掃引は
+bigram で行われた。`tokenizer_id` が bigram でないレポートの `alpha_note` には
+「この分割器では掃引していない」が付く（ADR 0015 Decision 3）。
+
+```bash
+make eval EVAL_LABEL=kagome EVAL_TOKENIZER=kagome  # 形態素分割（ADR 0018）
+```

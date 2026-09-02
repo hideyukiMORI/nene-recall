@@ -81,6 +81,7 @@ func testConfig() config.Config {
 		Store:           config.StorePostgres,
 		DatabaseURL:     "postgres://localhost/recall",
 		DBPath:          "recall.db",
+		Tokenizer:       config.TokenizerBigram,
 		EmbedProvider:   config.EmbedProviderOllama,
 		EmbedModel:      "bge-m3",
 		EmbedDimensions: 1024,

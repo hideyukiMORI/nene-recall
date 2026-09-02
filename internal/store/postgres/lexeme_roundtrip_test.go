@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"github.com/hideyukiMORI/nene-recall/internal/chunk"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical"
 	"github.com/hideyukiMORI/nene-recall/internal/lexical/bigram"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical/kagome"
 	"github.com/hideyukiMORI/nene-recall/internal/store/postgres"
 )
 
@@ -21,13 +23,44 @@ import (
 // 検索は成功し、結果も返る。単体テスト（偽の DB）では絶対に検出できないので、
 // 実 Postgres に対して確かめる。
 //
-// 🔴 ここだけは実物の分割器 (internal/lexical/bigram) を使う。偽実装で代用すると、
-// 検証しているのが偽実装とパーサの噛み合わせになり、何も保証しない。
+// 🔴 ここだけは実物の分割器 (internal/lexical/bigram・internal/lexical/kagome) を
+// 使う。偽実装で代用すると、検証しているのが偽実装とパーサの噛み合わせになり、
+// 何も保証しない。
+//
+// 🔴 往復同一性は分割器ごとに確かめる。ADR 0018 で分割器が2つになった以上、
+// 片方だけで往復を見ても「もう片方は 'simple' パーサと噛み合っているか」は
+// 分からない。形態素側は原形（表層に現れない文字列）をトークンにするので、
+// bigram で成り立った性質がそのまま成り立つとは限らない。
+
+// roundTripTokenizer は往復同一性を確かめる分割器1つ。
+type roundTripTokenizer struct {
+	name      string
+	tokenizer lexical.Tokenizer
+}
+
+// roundTripTokenizers は実物の分割器を両方返す。
+func roundTripTokenizers(t *testing.T) []roundTripTokenizer {
+	t.Helper()
+
+	morphological, err := kagome.New()
+	if err != nil {
+		t.Fatalf("kagome.New(): %v", err)
+	}
+
+	return []roundTripTokenizer{
+		{name: "bigram", tokenizer: bigram.New()},
+		{name: "kagome", tokenizer: morphological},
+	}
+}
 
 // TestLexemeRoundTrip は代表的な入力のレキシームを実 Postgres で確かめる。
 //
 // 期待値は「こうあってほしい」ではなく「実測してこうだった」である。パーサの
 // 挙動が版で変われば、この表が落ちて気づける。
+//
+// 🔑 この表は bigram だけを対象にする。表が固定しているのはレキシームの
+// **形**であり、形態素で分割すればトークン自体が別物になる。両方に同じ表を
+// 当てるのではなく、分割器に依存しない性質（次の2つのテスト）を両方で回す。
 func TestLexemeRoundTrip(t *testing.T) {
 	ts := newTestStoreWith(t, storeSpec{
 		embedder:  newFakeEmbedder("fake:1024"),
@@ -118,13 +151,6 @@ func lexemeRoundTripCases() []lexemeRoundTripCase {
 // 固定するが、「索引側と検索側が噛み合うか」は別の性質であり、片側だけ引用符で
 // 囲むといった変更で静かに壊れる。本文で引ける、を直接見る。
 func TestLexemeRoundTripMatchesItsOwnQuery(t *testing.T) {
-	ts := newTestStoreWith(t, storeSpec{
-		embedder:  newFakeEmbedder("fake:1024"),
-		tokenizer: bigram.New(),
-		fusion:    postgres.FusionWeightedSum,
-	})
-	orgA := mustOrgID(t, 1)
-
 	contents := []string{
 		"RECALL_STORE は postgres と sqlite を切り替える",
 		"pgvector 0.8.6 で測った",
@@ -134,22 +160,40 @@ func TestLexemeRoundTripMatchesItsOwnQuery(t *testing.T) {
 		"POST /v1/search で検索する",
 	}
 
-	tokenizer := bigram.New()
+	for _, tc := range roundTripTokenizers(t) {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := newTestStoreWith(t, storeSpec{
+				embedder:  newFakeEmbedder("fake:1024"),
+				tokenizer: tc.tokenizer,
+				fusion:    postgres.FusionWeightedSum,
+			})
 
-	for i, content := range contents {
-		id := putContent(t, ts, chunkSpec{
-			orgID: orgA, documentID: 1, sourceID: 1,
-			chunkIndex: i, content: content,
+			for i, content := range contents {
+				assertMatchesItsOwnQuery(t, ts, tc.tokenizer, chunkSpec{
+					orgID: mustOrgID(t, 1), documentID: 1, sourceID: 1,
+					chunkIndex: i, content: content,
+				})
+			}
 		})
+	}
+}
 
-		expression, err := postgres.EncodeTsQuery(tokenizer.Tokenize(content))
-		if err != nil {
-			t.Fatalf("EncodeTsQuery: %v", err)
-		}
+// assertMatchesItsOwnQuery は本文1件を取り込み、同じ分割器で作った検索式で
+// 引けることを確かめる。
+func assertMatchesItsOwnQuery(
+	t *testing.T, ts *testStore, tokenizer lexical.Tokenizer, spec chunkSpec,
+) {
+	t.Helper()
 
-		if !matchesQuery(t, ts, id, expression) {
-			t.Errorf("本文 %q が自分自身から作った検索式に一致しない（往復が閉じていない）", content)
-		}
+	id := putContent(t, ts, spec)
+
+	expression, err := postgres.EncodeTsQuery(tokenizer.Tokenize(spec.content))
+	if err != nil {
+		t.Fatalf("EncodeTsQuery: %v", err)
+	}
+
+	if !matchesQuery(t, ts, id, expression) {
+		t.Errorf("本文 %q が自分自身から作った検索式に一致しない（往復が閉じていない）", spec.content)
 	}
 }
 
@@ -241,4 +285,58 @@ func matchesQuery(t *testing.T, ts *testStore, id int64, expression string) bool
 	}
 
 	return matched
+}
+
+// TestLexemeRoundTripLosesAdjacencyWithMorphemes は、機能語を捨てる分割器では
+// 識別子の隣接判定が緩むことを実測として固定する。
+//
+// 🔴 これは「望ましい」ではなく「そうなっている」を記録するテストである。
+// 仕組みはこう。'simple' パーサは RECALL_STORE を 'recall' <-> 'store'（隣接）に
+// 割る。隣接は lexeme_text 上の位置で決まるので、間に何かトークンがあれば
+// 当たらない——bigram では囮の「は」が間に残るので当たらなかった。
+// 形態素側は助詞を捨てる (ADR 0018 Decision 2 の手順4) ので、
+// "recall は store" が lexeme_text 上で "recall store" になり、隣接してしまう。
+//
+// ⚠️ ADR 0018 の予想 (docs/benchmarks/2026-09-02-morph-prediction.md) は
+// 「`exact-term` は動かない。識別子は ASCII 語規則で bigram と同じトークンに
+// なるから」と書いている。トークンは同じでも、**周りのトークンが減ることで
+// 隣接の意味が変わる**という経路はそこに含まれていない。予想を書き換えず
+// （凍結してある）、ここに機械で読める形で残す。
+//
+// 🔑 落ちたら、それは分割規則か 'simple' パーサの挙動が変わったということで
+// ある。条件が変わったのだから id と ADR を見直すこと。
+func TestLexemeRoundTripLosesAdjacencyWithMorphemes(t *testing.T) {
+	morphological, err := kagome.New()
+	if err != nil {
+		t.Fatalf("kagome.New(): %v", err)
+	}
+
+	ts := newTestStoreWith(t, storeSpec{
+		embedder:  newFakeEmbedder("fake:1024"),
+		tokenizer: morphological,
+		fusion:    postgres.FusionWeightedSum,
+	})
+	orgA := mustOrgID(t, 1)
+
+	target := putContent(t, ts, chunkSpec{
+		orgID: orgA, documentID: 1, sourceID: 1,
+		chunkIndex: 0, content: "RECALL_STORE を postgres にする",
+	})
+	decoy := putContent(t, ts, chunkSpec{
+		orgID: orgA, documentID: 1, sourceID: 1,
+		chunkIndex: 1, content: "recall は store とは別の語である",
+	})
+
+	expression, err := postgres.EncodeTsQuery(morphological.Tokenize("RECALL_STORE"))
+	if err != nil {
+		t.Fatalf("EncodeTsQuery: %v", err)
+	}
+
+	if !matchesQuery(t, ts, target, expression) {
+		t.Errorf("RECALL_STORE を含む本文に一致しない")
+	}
+
+	if !matchesQuery(t, ts, decoy, expression) {
+		t.Errorf("囮に一致しなくなった。助詞を捨てる規則か simple パーサの挙動が変わっている")
+	}
 }

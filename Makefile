@@ -35,11 +35,15 @@ EVAL_FUSION ?=
 #    sqlite は比較実測用（ADR 0017）。rrf は postgres でしか指定できない。
 EVAL_STORE ?=
 EVAL_SQLITE_PATH ?=
+# 🔴 EVAL_TOKENIZER は「どの分割器で測るか」。既定は cmd/eval の bigram。
+#    kagome は比較実測用（ADR 0018）。既定を移すのは実測を見てからである。
+EVAL_TOKENIZER ?=
 EVAL_FLAGS := $(if $(EVAL_ALPHA),-alpha $(EVAL_ALPHA)) \
               $(if $(EVAL_ROUNDS),-rounds $(EVAL_ROUNDS)) \
               $(if $(EVAL_FUSION),-fusion $(EVAL_FUSION)) \
               $(if $(EVAL_STORE),-store $(EVAL_STORE)) \
-              $(if $(EVAL_SQLITE_PATH),-sqlite-path $(EVAL_SQLITE_PATH))
+              $(if $(EVAL_SQLITE_PATH),-sqlite-path $(EVAL_SQLITE_PATH)) \
+              $(if $(EVAL_TOKENIZER),-tokenizer $(EVAL_TOKENIZER))
 
 .PHONY: all check build run test cover cover-check vet fmt fmt-check lint conformance tidy tidy-check vuln tools clean eval
 
@@ -160,6 +164,7 @@ tools:
 ##     make eval EVAL_LABEL=alpha-10 EVAL_ALPHA=1   （純ベクトル・基準線と同条件）
 ##     make eval EVAL_LABEL=rrf EVAL_FUSION=rrf      （順位融合・alpha は無視される）
 ##     make eval EVAL_LABEL=sqlite EVAL_STORE=sqlite （比較用の SQLite・ADR 0017）
+##     make eval EVAL_LABEL=kagome EVAL_TOKENIZER=kagome （形態素分割・ADR 0018）
 ##
 ## 🔴 条件を変えたら EVAL_LABEL も変えること。同じ名前で上書きすると、
 ## 前の条件のレポートが消えて before/after を並べられなくなる。

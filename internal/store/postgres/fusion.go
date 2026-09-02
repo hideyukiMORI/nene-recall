@@ -130,6 +130,12 @@ type RankingSettings struct {
 	// recall の差には「ストアの差」と「採点関数の差」が混ざるので、後者を
 	// 名指しできる印が要る (ADR 0017)。
 	LexicalScorer string
+	// TokenizerID は取り込みと検索に使った分割器の識別子 (Tokenizer.ID())。
+	//
+	// 🔴 これが無いと、bigram と形態素 (ADR 0018) のレポートを条件表で
+	// 見分けられない。ファイル名やラベルは人が付けるもので、実際に何で
+	// 測ったかの記録にはならない。Store・LexicalScorer と同じ理由である。
+	TokenizerID string
 	// TsRankNormalization は ts_rank に渡した正規化フラグ。
 	TsRankNormalization int
 	// RRFK は RRF の平滑化定数。方式が RRF でなくても記録する

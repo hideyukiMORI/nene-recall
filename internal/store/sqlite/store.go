@@ -193,6 +193,11 @@ type RankingSettings struct {
 	LexicalScorer string
 	// Store はバックエンドの名前。
 	Store string
+	// TokenizerID は取り込みと検索に使った分割器の識別子 (Tokenizer.ID())。
+	//
+	// 🔴 これが無いと、bigram と形態素 (ADR 0018) のレポートを条件表で
+	// 見分けられない。LexicalScorer と同じ理由である。
+	TokenizerID string
 }
 
 // RankingSettings はこのストアが順位付けに使っている条件を返す。
@@ -204,6 +209,7 @@ func (s *Store) RankingSettings() RankingSettings {
 		Fusion:        fusionWeightedSumName,
 		LexicalScorer: lexicalScorerName,
 		Store:         storeName,
+		TokenizerID:   s.tokenizerID,
 	}
 }
 
