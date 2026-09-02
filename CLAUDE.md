@@ -113,7 +113,10 @@ Q-4（reranker）を「Phase 1 は入れない」と決めた判断は、**こ�
    実行時検査・違反時の即エラー化の3つで支えている。詳細は `internal/store/postgres/searcher.go`
 4. ~~**語彙検索**~~ — ✅ 完了。Go 側の bigram 分割 → Postgres の `tsvector`（`'simple'` 辞書）。
    `ts_rank` の**長さ正規化は掛けない**（実測で有害だった）。ADR 0014。
-   ⚠️ Q-2（bigram か形態素か）は ADR 0014 では閉じていない——**既定が bigram である**ことだけを決めた
+   **Q-2（bigram か形態素か）は ADR 0021 で決着**: 既定は bigram のまま。kagome（形態素・ADR 0018）は
+   `RECALL_TOKENIZER=kagome` で正式な選択肢。実測（rounds=5）は `paraphrase` +0.18 と `orthography` −0.18 が相殺し、
+   総合値・`MRR` に優位なし。次に測るのは**和集合分割器**（bigram ∪ kagome 原形・予想は事前登録済み）。
+   ⚠️ 分割器を変えると保存済み `lexeme_text` は `tokenizer_id` 不一致で全部無効になる（取り込み直し）
 5. ~~**ハイブリッド合成**~~ — ✅ 完了。加重和 `alpha*vector + (1-alpha)*lexical` で、
    **語彙スコアはクエリ内の最大値で [0,1] に正規化してから**合成する（割らないと合成は機能しない。
    スケールが3桁違う）。`alpha` の既定は **0.8**。ADR 0015。RRF は**計測用に残置**している
