@@ -126,9 +126,15 @@ Q-4（reranker）を「Phase 1 は入れない」と決めた判断は、**こ�
    p95（**埋め込み往復を含む／除く の両方**）を測り、`docs/benchmarks/data/` に
    JSON レポートを書く。評価セットは `testdata/eval/` の**実データ**
    （259チャンク・58クエリ・正解 延べ236件）
-7. **実測と HNSW** — ベンチを取り `docs/benchmarks/` に記録してから索引を入れる。before/after を残す。
-   ⚠️ 対象は HNSW（`embedding`）だけでなく **`GIN (lexemes)`** も（語彙の全行 `ts_rank` が系統2 p95 を 3.3 → 14.4ms にした）。
-   🔴 **10万件のデータ源は施主判断待ち**（評価セットは 259 チャンク。合成か実文書かで結果の意味が変わる）
+7. **実測と HNSW** — 🚧 手順 3 まで進行中。
+   - 手順 2 ✅ **before**（[`2026-09-02-eval-100k-before-index.md`](docs/benchmarks/2026-09-02-eval-100k-before-index.md)）:
+     日本語 Wikipedia 10万件を無関係文書として混入（ADR 0019・`tools/wikidistract`・埋め込みはキャッシュ再利用）。
+     全探索は **p95 5,766ms**（埋め込み除く）・`recall@10` 0.724 → **0.586**（上位 10 件の 53% が無関係文書）。
+     実行計画は Seq Scan・単一プロセス（窓関数）・`work_mem` 溢れ。**全探索の SQL のまま索引を張っても効かない**（ORDER BY が合成式）
+   - 手順 3 🚧 **候補生成モード**（ADR 0022・PR #28）: `RECALL_SEARCH_MODE=candidates` で両側 top-K（`RECALL_CANDIDATE_K`・
+     HNSW `vector_ip_ops` と GIN `@@`）の和集合を候補内正規化で合成。**索引は migration 0004 で張られている**が、
+     既定は `exhaustive`（全探索）のまま。⚠️ `candidates` では `K ≤ ef_search`（`RECALL_HNSW_EF_SEARCH`・既定 40）が必須。
+     **after の実測と既定の切り替え判断（ADR 0023）が残っている**
 8. ~~**SQLite ストア**~~ — ✅ 完了（ADR 0017）。`internal/store/sqlite`。純 Go の `modernc.org/sqlite`・
    ベクトルは `BLOB` を Go 側で総当たり・語彙は FTS5（`tokenize='ascii'`）の `bm25()`・合成は加重和のみ。
    `id` は `AUTOINCREMENT`（再利用させない。ADR 0013 の写像が壊れる）。🔴 `org_id` の絞り込みは
@@ -253,15 +259,19 @@ Corpus では分離条件が SQL の WHERE 句に埋まっていた（`PdoChunkS
 `mattn/go-sqlite3` は cgo を要求する。クロスコンパイル可能という前提が壊れる。
 SQLite ストア（比較用）も純 Go の `modernc.org/sqlite` を使う。
 
-### 6. 🔑 HNSW 索引を最初から作らない
+### 6. 🔑 索引は「測ってから入れた」。その証拠は before 文書であり、テストではない
 
 ADR 0007 の要点は「pgvector を選んだこと」ではなく「**測ってから索引を入れた経路**」。
-最初から索引を張ると、**なぜ入れたかを数字で語れなくなり、ADR 0007 の価値が消える**。
+手順 1（索引なしで完成）・2（10万件で測る・[before 文書](docs/benchmarks/2026-09-02-eval-100k-before-index.md)）は終わり、
+手順 3 で **HNSW（`vector_ip_ops`）と GIN（`lexemes`）が migration 0004 で入った**（ADR 0022）。
 
-手順は固定:
-1. 索引なしで Phase 1 を完成させる
-2. 10万件規模で p95 と recall を測り `docs/benchmarks/` に残す
-3. `CREATE INDEX ... USING hnsw` を入れて before/after を並べて記録する
+次に読む人が緩めてはいけない点:
+- **索引が使われるのは `candidates` モードだけ**。`exhaustive` の SQL は ORDER BY が合成式なので索引に乗らない。
+  「索引を張ったのに速くならない」は設定ではなく SQL の形の問題である
+- 演算子 `<#>` と演算子クラス `vector_ip_ops` は**対**。片方だけ変えると索引が黙って使われなくなる。
+  `TestSearchIndexesExistWithCorrectOperatorClass` がこれを固定している
+- **before の数字を消さない**。after と並べて読めることが ADR 0007 の価値そのもの
+- 既定を `candidates` に切り替えるのは after の実測を見て ADR 0023 で。`alpha` は候補内正規化で意味が変わるので再掃引が要る（ADR 0015 Decision 3）
 
 ### 7. `alpha` の 0.8 は条件付きの値
 
