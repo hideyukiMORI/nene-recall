@@ -115,7 +115,9 @@ Q-4（reranker）を「Phase 1 は入れない」と決めた判断は、**こ�
    `ts_rank` の**長さ正規化は掛けない**（実測で有害だった）。ADR 0014。
    **Q-2（bigram か形態素か）は ADR 0021 で決着**: 既定は bigram のまま。kagome（形態素・ADR 0018）は
    `RECALL_TOKENIZER=kagome` で正式な選択肢。実測（rounds=5）は `paraphrase` +0.18 と `orthography` −0.18 が相殺し、
-   総合値・`MRR` に優位なし。次に測るのは**和集合分割器**（bigram ∪ kagome 原形・予想は事前登録済み）。
+   総合値・`MRR` に優位なし。**和集合分割器（bigram ∪ kagome）も測ったが両取りは成立せず**（`paraphrase` が bigram をも
+   下回った・ADR 0021 追記）。`union` は計測用に残置。⇒ **`paraphrase` の穴を語彙側で埋める手は尽きた。**
+   残る候補は採点関数（IDF）か reranker（Q-4・施主判断待ち）。
    ⚠️ 分割器を変えると保存済み `lexeme_text` は `tokenizer_id` 不一致で全部無効になる（取り込み直し）
 5. ~~**ハイブリッド合成**~~ — ✅ 完了。加重和 `alpha*vector + (1-alpha)*lexical` で、
    **語彙スコアはクエリ内の最大値で [0,1] に正規化してから**合成する（割らないと合成は機能しない。
