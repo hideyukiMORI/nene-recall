@@ -12,15 +12,16 @@
 // 丸ごと1トークンになり「対象」で引けない。形態素解析を使えば語で割れるが、
 // 辞書を抱えることになる。どちらが良いかは要件定義 Q-2 の未決事項であり、
 // ADR 0009 の評価で決着させる。この分割器は依存の少ない側の実測値を出すために作った。
+//
+// 🔑 前処理と英数の語の規則は internal/lexical/internal/asciiword に置いてあり、
+// 形態素側 (internal/lexical/kagome) と**共有している**。ADR 0018 Decision 2 が
+// 「ASCII の語は bigram と同じ規則で1語1トークンにする」と決めているので、
+// 同一性はコードの共有で保証する（文章では守れない）。
 package bigram
 
 import (
-	"strings"
-	"unicode"
-
-	"golang.org/x/text/unicode/norm"
-
 	"github.com/hideyukiMORI/nene-recall/internal/lexical"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical/internal/asciiword"
 )
 
 // Tokenizer が契約を満たしていることをコンパイル時に確かめる。
@@ -40,20 +41,6 @@ const id = "bigram:nfkc-lower:v1"
 // cjkRunLength は CJK 連続部から何文字ずつ切り出すか。bigram なので 2。
 const cjkRunLength = 2
 
-// connectors は英数トークンの内側で語を繋ぐ文字。
-//
-// 🔴 「内側」に限る。末尾の連結子は落とす。"末尾です." の "." まで拾うと、
-// 同じ語が文末にあるかどうかで別トークンになってしまう。
-//
-// この4つを選んだ理由はコーパスにある: 下線は RECALL_STORE・CORPUS_SEARCH_DRIVER、
-// 点は 0.8.6・PdoChunkSearchRepository.php、ハイフンは bge-m3・golangci-lint、
-// 斜線は v1/search。いずれも「割ると別物になる」識別子である。
-//
-// 🔴 tsquery のメタ文字（& | ! ( ) : * < > と引用符）を1つも含まないこと。
-// トークンが検索式の被演算子としてそのまま置かれるので、メタ文字が混ざると
-// 構文が壊れる。lexical.Tokenizer の契約がこれを要求している。
-const connectors = "_.-/"
-
 // Tokenizer は NFKC 正規化と文字クラスに基づく分割器。
 //
 // 🔑 状態を持たないのでゼロ値が有効である。GO-003 が禁じているのは
@@ -63,6 +50,10 @@ const connectors = "_.-/"
 type Tokenizer struct{}
 
 // New は分割器を返す。
+//
+// ⚠️ 形態素側の kagome.New は error を返す（辞書の読み込みが失敗しうる）。
+// 形が違うのは実装の事情であって契約の違いではない。lexical.Tokenizer 越しに
+// 使う側からは、どちらも同じ口に見える。
 func New() Tokenizer { return Tokenizer{} }
 
 // ID は保存済みトークン列との照合に使う識別子を返す。
@@ -83,17 +74,17 @@ func (Tokenizer) ID() string { return id }
 // 分割できる語が1つも無ければ空を返す。これは正常な入力（絵文字だけのクエリなど）
 // であり、エラーではない。呼び出し側は語彙スコア 0 として扱う。
 func (Tokenizer) Tokenize(text string) []string {
-	runes := []rune(strings.ToLower(norm.NFKC.String(text)))
+	runes := []rune(asciiword.Normalize(text))
 	tokens := []string{}
 
 	for i := 0; i < len(runes); {
 		switch {
-		case isCJK(runes[i]):
-			end := runEnd(runes, i, isCJK)
+		case asciiword.IsCJK(runes[i]):
+			end := asciiword.RunEnd(runes, i, asciiword.IsCJK)
 			tokens = appendBigrams(tokens, runes[i:end])
 			i = end
-		case isWord(runes[i]):
-			end := wordEnd(runes, i)
+		case asciiword.IsWord(runes[i]):
+			end := asciiword.End(runes, i)
 			tokens = append(tokens, string(runes[i:end]))
 			i = end
 		default:
@@ -124,71 +115,4 @@ func appendBigrams(tokens []string, run []rune) []string {
 	}
 
 	return tokens
-}
-
-// runEnd は同じ文字クラスが続く終端（排他）を返す。
-func runEnd(runes []rune, start int, class func(rune) bool) int {
-	end := start
-	for end < len(runes) && class(runes[end]) {
-		end++
-	}
-
-	return end
-}
-
-// wordEnd は英数トークンの終端（排他）を返す。
-//
-// 連結子は後ろに語構成文字が続くときだけ取り込む。"0.8.6" は1トークンになり、
-// "末尾です." の末尾の "." は落ちる。
-func wordEnd(runes []rune, start int) int {
-	end := start
-
-	for end < len(runes) {
-		switch {
-		case isWord(runes[end]):
-			end++
-		case isConnector(runes[end]) && end+1 < len(runes) && isWord(runes[end+1]):
-			end++ // 連結子を取り込む。次の語構成文字は次の周回が取り込む
-		default:
-			return end
-		}
-	}
-
-	return end
-}
-
-// isCJK は漢字・ひらがな・カタカナかを判定する。
-//
-// 🔴 Unicode の Script だけでは足りない。長音符 "ー" (U+30FC) と "〆" (U+3006) は
-// Script が Common で、Han にも Hiragana にも Katakana にも属さない（実測）。
-// これらを CJK から外すと「サーバー」が「サ」「ー」「バ」「ー」に割れ、
-// 表記ゆれ（`orthography`）を測るはずのクエリが分割器の欠陥を測ることになる。
-//
-// 半角カナの長音 "ｰ" (U+FF70) は NFKC が U+30FC に寄せるので、ここには要らない。
-// この関数が正規化後の文字だけを見ることが前提である。
-func isCJK(r rune) bool {
-	if r == 'ー' || r == '〆' {
-		return true
-	}
-
-	return unicode.Is(unicode.Han, r) ||
-		unicode.Is(unicode.Hiragana, r) ||
-		unicode.Is(unicode.Katakana, r)
-}
-
-// isWord は語を構成する文字（CJK 以外の文字と数字）かを判定する。
-//
-// CJK を先に除くのは、ひらがなも漢字も unicode.IsLetter が真を返すためである。
-// 判定の順序がそのまま分割の規則になっている。
-func isWord(r rune) bool {
-	if isCJK(r) {
-		return false
-	}
-
-	return unicode.IsLetter(r) || unicode.IsDigit(r)
-}
-
-// isConnector は英数トークンの内側で語を繋ぐ文字かを判定する。
-func isConnector(r rune) bool {
-	return strings.ContainsRune(connectors, r)
 }
