@@ -57,6 +57,9 @@ func testRanking() eval.RankingSettings {
 		Fusion: "weighted-sum", Store: "postgres", LexicalScorer: "ts_rank",
 		TokenizerID:         "bigram:nfkc-lower:v1",
 		TsRankNormalization: intPtr(0), RRFK: intPtr(60),
+		// 全探索で測った記録。候補モードのつまみ（K・探索幅）は存在しないので
+		// nil のままにする (ADR 0022・様式 v7)。
+		SearchMode: strPtr("exhaustive"), CandidateK: nil, EfSearch: nil,
 	}
 }
 
@@ -363,6 +366,7 @@ func TestMeasureRejectsInvalidOptions(t *testing.T) {
 			Ranking: eval.RankingSettings{
 				Fusion: "", Store: "", LexicalScorer: "", TokenizerID: "",
 				TsRankNormalization: nil, RRFK: nil,
+				SearchMode: nil, CandidateK: nil, EfSearch: nil,
 			},
 			Distractors: nil, EmbedCache: false,
 		},
@@ -374,6 +378,7 @@ func TestMeasureRejectsInvalidOptions(t *testing.T) {
 				Fusion: "weighted-sum", Store: "postgres", LexicalScorer: "ts_rank",
 				TokenizerID:         "",
 				TsRankNormalization: intPtr(0), RRFK: intPtr(60),
+				SearchMode: strPtr("exhaustive"), CandidateK: nil, EfSearch: nil,
 			},
 			Distractors: nil, EmbedCache: false,
 		},

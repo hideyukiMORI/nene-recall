@@ -55,6 +55,35 @@ const (
 	TokenizerUnion Tokenizer = "union"
 )
 
+// SearchMode は検索が候補集合をどう作るかの種類。
+//
+// 🔴 既定は exhaustive（現行の全探索）のままにする。candidates は
+// ADR 0022 が実装した**計測モード**であり、既定を移すのは after の実測
+// （recall@10 の低下幅・p95）を見て別の ADR を書いてからである。
+//
+// 🔑 索引（HNSW / GIN）は migration 0004 で常に張られる。張られていても
+// exhaustive の SQL は使わない（ORDER BY が合成式なので索引の順序に乗らない）。
+// ⇒ 索引の効果と候補生成の効果は分離できない (ADR 0022 Decision 3)。
+type SearchMode string
+
+const (
+	// SearchModeExhaustive は全行に両方のスコアを付けてから並べる。既定。
+	SearchModeExhaustive SearchMode = "exhaustive"
+	// SearchModeCandidates は両側 top-K の和集合だけを対象にする (ADR 0022)。
+	SearchModeCandidates SearchMode = "candidates"
+)
+
+// defaultCandidateK / defaultEfSearch は候補モードの既定値。
+//
+// 🔴 postgres.DefaultCandidateK / postgres.DefaultEfSearch と同じ値である。
+// config はストアを import できない層なので (ARC-001) 定数を共有できず、
+// 2箇所に同じ数字が並ぶ。片方だけ変えないこと——変えると「設定を書かなければ
+// K=100、書けば K=別の値」という説明のつかない差になる。
+const (
+	defaultCandidateK = 100
+	defaultEfSearch   = 40
+)
+
 // EmbedProvider は埋め込みプロバイダの種類。
 //
 // string のままにしないのは、選択肢が閉じていることを型で示し、switch の網羅を
@@ -140,6 +169,26 @@ type Config struct {
 	// (Embedder.ID)・候補集合の作り方のどれかを変えたら測り直すこと
 	// (ADR 0015 Decision 3)。
 	DefaultAlpha float32
+
+	// SearchMode は候補集合の作り方。RECALL_SEARCH_MODE、既定 "exhaustive"。
+	//
+	// 🔴 既定を candidates へ移すのは after の実測を見てからである (ADR 0022)。
+	SearchMode SearchMode
+	// CandidateK は候補モードの両側 top-K。RECALL_CANDIDATE_K、既定 100。
+	//
+	// 🔴 100 に根拠は無い。ADR 0022 が「まず動かして測る」ために置いた値であり、
+	// 掃引して選んだ値ではない。「調整済み」であるかのように書かないこと。
+	CandidateK int
+	// HNSWEfSearch は候補モードの hnsw.ef_search。RECALL_HNSW_EF_SEARCH、既定 40。
+	//
+	// 🔴 CandidateK ≤ HNSWEfSearch でなければ HNSW は K 件を返せない。
+	// 破ると「recall が少し低い」だけの症状になるので、SearchMode が candidates の
+	// ときに Load が起動時に拒否する (ADR 0022 Decision 4)。
+	//
+	// ⚠️ 既定は K=100 / ef=40 で、この2つは**互いに矛盾している**（ADR 0022 が
+	// 選んだ値で、40 は pgvector 自身の既定）。全探索ではどちらも使われないので
+	// 害は無いが、candidates へ切り替えるときは ef もいっしょに上げること。
+	HNSWEfSearch int
 }
 
 // Load は環境変数から設定を組み立てる。
@@ -160,22 +209,14 @@ func Load() (Config, error) {
 		VoyageAPIKey:    os.Getenv("VOYAGE_API_KEY"),
 		APIToken:        os.Getenv("RECALL_API_TOKEN"),
 		DefaultAlpha:    0.8,
+		SearchMode:      SearchMode(env("RECALL_SEARCH_MODE", string(SearchModeExhaustive))),
+		CandidateK:      defaultCandidateK,
+		HNSWEfSearch:    defaultEfSearch,
 	}
 
-	if v := os.Getenv("RECALL_EMBED_DIMENSIONS"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			return Config{}, fmt.Errorf("%w: RECALL_EMBED_DIMENSIONS must be a positive integer, got %q", ErrInvalidValue, v)
-		}
-		c.EmbedDimensions = n
-	}
-
-	if v := os.Getenv("RECALL_DEFAULT_ALPHA"); v != "" {
-		f, err := strconv.ParseFloat(v, 32)
-		if err != nil || f < 0 || f > 1 {
-			return Config{}, fmt.Errorf("%w: RECALL_DEFAULT_ALPHA must be within [0,1], got %q", ErrInvalidValue, v)
-		}
-		c.DefaultAlpha = float32(f)
+	c, err := applyNumericOverrides(c)
+	if err != nil {
+		return Config{}, err
 	}
 
 	if err := c.validate(); err != nil {
@@ -193,7 +234,124 @@ func (c Config) validate() error {
 		return err
 	}
 
+	if err := c.validateSearch(); err != nil {
+		return err
+	}
+
 	return c.validateEmbedder()
+}
+
+// applyNumericOverrides は数値の環境変数を読んで既定値を上書きする。
+//
+// 🔑 Load から切り出してあるのは、環境変数が増えるたびに Load の分岐が
+// 積み上がるからである (GO-011)。読む順序に意味は無く、どれか1つでも
+// 壊れていれば設定を読んだ直後に落ちる、という性質だけが要る。
+func applyNumericOverrides(c Config) (Config, error) {
+	dimensions, err := positiveEnvInt("RECALL_EMBED_DIMENSIONS", c.EmbedDimensions)
+	if err != nil {
+		return Config{}, err
+	}
+
+	candidateK, err := positiveEnvInt("RECALL_CANDIDATE_K", c.CandidateK)
+	if err != nil {
+		return Config{}, err
+	}
+
+	efSearch, err := positiveEnvInt("RECALL_HNSW_EF_SEARCH", c.HNSWEfSearch)
+	if err != nil {
+		return Config{}, err
+	}
+
+	alpha, err := alphaFromEnv(c.DefaultAlpha)
+	if err != nil {
+		return Config{}, err
+	}
+
+	c.EmbedDimensions = dimensions
+	c.CandidateK = candidateK
+	c.HNSWEfSearch = efSearch
+	c.DefaultAlpha = alpha
+
+	return c, nil
+}
+
+// alphaFromEnv は合成の重みを読む。未設定なら fallback を返す。
+//
+// 🔴 [0,1] の外を拒む。範囲外の alpha は「重み」ではなく、加重和の意味が
+// 壊れた状態で静かに順位を歪める。
+func alphaFromEnv(fallback float32) (float32, error) {
+	v := os.Getenv("RECALL_DEFAULT_ALPHA")
+	if v == "" {
+		return fallback, nil
+	}
+
+	f, err := strconv.ParseFloat(v, 32)
+	if err != nil || f < 0 || f > 1 {
+		return 0, fmt.Errorf("%w: RECALL_DEFAULT_ALPHA must be within [0,1], got %q",
+			ErrInvalidValue, v)
+	}
+
+	return float32(f), nil
+}
+
+// positiveEnvInt は正の整数の環境変数を読む。未設定なら fallback を返す。
+//
+// 🔴 「0 なら既定を使う」にしない。0 は候補モードでは意味を持たない値であり、
+// 「未設定」と「0 と書いた」を同じ扱いにすると、書き間違いが黙って既定で走る。
+// 未設定は空文字でしか表せないので、そこだけを既定への入口にする。
+func positiveEnvInt(key string, fallback int) (int, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%w: %s must be a positive integer, got %q", ErrInvalidValue, key, v)
+	}
+
+	return n, nil
+}
+
+// validateSearch は候補の作り方と、それが要求する値の整合を検証する。
+//
+// 🔴 未知の値を既定へ黙って倒さない。綴り誤りが exhaustive として起動すると、
+// 「candidates で測ったつもりの数字」が全探索のものになる。索引の after を
+// 取り違えるので、設定の誤りは設定を読んだ直後に落とす (ADR 0022 Decision 3)。
+//
+// 🔴 K ≤ ef_search を確かめるのは candidates のときだけである。ADR 0022 が
+// 選んだ既定は K=100（「まず動かして測る」ための値）と ef_search=40（pgvector 自身の
+// 既定）で、**この2つは互いに矛盾している**。全探索ではどちらのつまみも使われない
+// ので矛盾は害を持たないが、無条件に検査すると**既定の .env がそのままでは
+// 起動しない**ことになる。⇒ 検査は、その値が実際に効く経路に限る。
+//
+// ⚠️ 帰結として、RECALL_SEARCH_MODE=candidates へ切り替えるときは
+// RECALL_HNSW_EF_SEARCH も K 以上へ上げる必要がある。切り替えた瞬間に
+// 起動時エラーで分かる（.env.example にも書いてある）。
+//
+// 🔑 K < 1 のほうはモードに関わらず拒否する。「候補を 0 件取る」は
+// どの経路でも意味を持たない値であり、値そのものが誤りだからである。
+func (c Config) validateSearch() error {
+	switch c.SearchMode {
+	case SearchModeExhaustive, SearchModeCandidates:
+	default:
+		return fmt.Errorf("%w: RECALL_SEARCH_MODE must be %q or %q, got %q",
+			ErrUnknownOption, SearchModeExhaustive, SearchModeCandidates, c.SearchMode)
+	}
+
+	if c.CandidateK < 1 {
+		return fmt.Errorf("%w: RECALL_CANDIDATE_K must be at least 1, got %d",
+			ErrInvalidValue, c.CandidateK)
+	}
+
+	if c.SearchMode == SearchModeCandidates && c.CandidateK > c.HNSWEfSearch {
+		return fmt.Errorf(
+			"%w: RECALL_CANDIDATE_K (%d) must not exceed RECALL_HNSW_EF_SEARCH (%d) "+
+				"when RECALL_SEARCH_MODE=%s: HNSW cannot return more rows than ef_search",
+			ErrInvalidValue, c.CandidateK, c.HNSWEfSearch, SearchModeCandidates)
+	}
+
+	return nil
 }
 
 // validateTokenizer は分割器の選択を検証する。

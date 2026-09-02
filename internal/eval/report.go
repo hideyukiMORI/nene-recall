@@ -64,7 +64,23 @@ import (
 // 0.83 は同じ数字ではない。版が同じだと「conditions に distractors が無い」ことが
 // 「紛れ込み無しで測った」なのか「その項目を持たない古い様式」なのかを区別
 // できず、並べて読めなくなる。
-const ReportSchema = "nene-recall/eval-report/v6"
+// v7 (2026-09-02) で変えたところ（索引つきの候補生成検索・ADR 0022）:
+//   - conditions.ranking に search_mode（"exhaustive" / "candidates"）を足した。
+//     そのストアに候補の作り方という概念が無ければ**キーごと出ない**（sqlite）
+//   - conditions.ranking に candidate_k と ef_search を足した。
+//     exhaustive で測ったレポートでは**キーごと出ない**
+//
+// 🔴 v7 も追加だけだが、版を上げる理由は v6 と同じ性質のものである。
+// **候補の作り方が recall と latency の意味を変える。** 全探索で測った
+// recall@10 と、両側 top-K の和集合だけを見て測った recall@10 は、同じ定義の
+// 同じ数字だが同じ条件の数字ではない。版が同じだと「conditions に search_mode が
+// 無い」ことが「exhaustive で測った」なのか「その項目を持たない古い様式」なのかを
+// 区別できず、索引の before/after を並べて読めなくなる。
+//
+// 🔑 candidate_k と ef_search を exhaustive で出さないのは、v4 が sqlite の
+// ts_rank_normalization で塞いだ穴と同じ理由である——全探索の経路に K も
+// 探索幅も存在しない。値を書けば「その条件で測った」と読まれる。
+const ReportSchema = "nene-recall/eval-report/v7"
 
 // Report は1回の計測の全記録。JSON でそのまま docs/benchmarks/data/ に残す。
 //
@@ -262,6 +278,25 @@ type RankingSettings struct {
 	// RRFK は RRF の平滑化定数。TsRankNormalization と同じく postgres 専用で、
 	// 同じ理由でポインタである。
 	RRFK *int `json:"rrf_k,omitempty"`
+	// SearchMode は候補集合の作り方（"exhaustive" / "candidates"）。postgres 専用。
+	//
+	// 🔴 これが無いと、索引を入れた後のレポートを入れる前のレポートと並べて
+	// 読めない。全探索の SQL は索引が張られていても索引を使わないので、
+	// 「索引の有無」ではなく「候補の作り方」のほうが条件の区別になる
+	// (docs/adr/0022-indexed-candidate-search.md Decision 3)。
+	//
+	// 🔴 ポインタなのは sqlite に候補の作り方という概念が無いためである。
+	// 空文字を入れると「記録し忘れた」と区別がつかない (GO-004)。
+	SearchMode *string `json:"search_mode,omitempty"`
+	// CandidateK は候補モードの両側 top-K。
+	//
+	// 🔴 exhaustive では nil になる。全探索の経路に K というつまみは存在せず、
+	// 値を書けば「その K で測った」と読まれる（v4 が sqlite の
+	// ts_rank_normalization で塞いだのと同じ穴）。
+	CandidateK *int `json:"candidate_k,omitempty"`
+	// EfSearch は HNSW の探索幅 hnsw.ef_search。CandidateK と同じ理由で
+	// ポインタであり、exhaustive では nil になる。
+	EfSearch *int `json:"ef_search,omitempty"`
 }
 
 // QueryReport はクエリ1件の生データ。

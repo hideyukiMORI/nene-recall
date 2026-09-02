@@ -46,6 +46,21 @@ EVAL_TOKENIZER ?=
 #    系統1（埋め込み往復を含む）の latency はキャッシュの有無で変わらない。
 EVAL_DISTRACTORS ?=
 EVAL_EMBED_CACHE ?=
+# 🔴 EVAL_MODE は「候補集合をどう作るか」（ADR 0022）。既定は cmd/eval の exhaustive。
+#    candidates は索引（HNSW / GIN）を効かせる計測モードで、既定を移すのは
+#    after の実測を見て別の ADR を書いてからである。
+# 🔴 EVAL_CANDIDATE_K / EVAL_EF_SEARCH は candidates のときの条件。
+#    K <= ef_search でなければ HNSW は K 件を返せないので、既定の K=100 で
+#    測るなら EVAL_EF_SEARCH も 100 以上へ上げること（構築時に拒否される）。
+EVAL_MODE ?=
+EVAL_CANDIDATE_K ?=
+EVAL_EF_SEARCH ?=
+# 🔴 EVAL_DB_NAME は作り直す評価用 DB の名前。既定は cmd/eval の recall_eval。
+#    複数のレーンが同じ Postgres に対して同時に測るとき、共有の recall_eval を
+#    互いに DROP して壊し合わないために分ける。recall_eval で始まる名前だけが
+#    通る（このコマンドは指定された DB を DROP するので、任意の DB を消せる口に
+#    しない）。ポートと認証は定数のままで、別の Postgres は向けられない。
+EVAL_DB_NAME ?=
 EVAL_FLAGS := $(if $(EVAL_ALPHA),-alpha $(EVAL_ALPHA)) \
               $(if $(EVAL_ROUNDS),-rounds $(EVAL_ROUNDS)) \
               $(if $(EVAL_FUSION),-fusion $(EVAL_FUSION)) \
@@ -53,7 +68,11 @@ EVAL_FLAGS := $(if $(EVAL_ALPHA),-alpha $(EVAL_ALPHA)) \
               $(if $(EVAL_SQLITE_PATH),-sqlite-path $(EVAL_SQLITE_PATH)) \
               $(if $(EVAL_TOKENIZER),-tokenizer $(EVAL_TOKENIZER)) \
               $(if $(EVAL_DISTRACTORS),-distractors $(EVAL_DISTRACTORS)) \
-              $(if $(EVAL_EMBED_CACHE),-embed-cache $(EVAL_EMBED_CACHE))
+              $(if $(EVAL_EMBED_CACHE),-embed-cache $(EVAL_EMBED_CACHE)) \
+              $(if $(EVAL_MODE),-mode $(EVAL_MODE)) \
+              $(if $(EVAL_CANDIDATE_K),-candidate-k $(EVAL_CANDIDATE_K)) \
+              $(if $(EVAL_EF_SEARCH),-ef-search $(EVAL_EF_SEARCH)) \
+              $(if $(EVAL_DB_NAME),-eval-db $(EVAL_DB_NAME))
 
 .PHONY: all check build run test cover cover-check vet fmt fmt-check lint conformance tidy tidy-check vuln tools clean eval
 
@@ -176,6 +195,20 @@ tools:
 ##     make eval EVAL_LABEL=sqlite EVAL_STORE=sqlite （比較用の SQLite・ADR 0017）
 ##     make eval EVAL_LABEL=kagome EVAL_TOKENIZER=kagome （形態素分割・ADR 0018）
 ##     make eval EVAL_LABEL=union EVAL_TOKENIZER=union   （bigram と形態素の和集合・ADR 0021）
+##     make eval EVAL_LABEL=candidates EVAL_MODE=candidates EVAL_EF_SEARCH=100
+##                                                   （索引を効かせる候補生成・ADR 0022）
+##
+## 🔴 EVAL_MODE=candidates と exhaustive の差を「索引の効果」と読まないこと。
+##    索引は migration 0004 で常に張られており、exhaustive の SQL は張られていても
+##    索引を使わない（ORDER BY が合成式）。差には候補生成の効果が混ざる。
+## ⚠️ 候補モードでは語彙スコアの正規化に使う最大値が「候補集合内の最大値」に
+##    変わるので、alpha の既定 0.8（exhaustive で掃引した値）は持ち込めない。
+##
+## 🔴 他のレーンと同時に測るときは EVAL_DB_NAME を分けること。既定の recall_eval は
+##    毎回 DROP されるので、2本が同じ名前を使うと互いの計測を壊す。
+##
+##     make eval EVAL_LABEL=candidates EVAL_MODE=candidates EVAL_EF_SEARCH=100 \
+##       EVAL_DB_NAME=recall_eval_lane17
 ##
 ## 🔑 10万件規模の実測（ADR 0019）。紛れ込みは tools/wikidistract で生成する
 ##    （手順は tools/wikidistract/README.md）。初回は埋め込みに約20分かかり、
