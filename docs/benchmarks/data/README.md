@@ -26,9 +26,9 @@ make eval EVAL_LABEL=baseline GPU_NOTE="他アプリが 5.7GB 使用中"
 
 | 区分 | 内容 |
 | --- | --- |
-| 環境 | git revision / 未コミット変更の有無・Go 版・`embedder_id`・**Ollama の版とモデル digest**・PostgreSQL と pgvector の版・GPU 占有の自己申告 |
+| 環境 | git revision / 未コミット変更の有無・Go 版・`embedder_id`・**Ollama の版とモデル digest**・PostgreSQL と pgvector の版・**SQLite の版**・GPU 占有の自己申告 |
 | 入力の同一性 | 3ファイルの **sha256** と件数 |
-| 条件 | `alpha`・`limit`・`rounds`・ウォームアップ周回数・`k` 値・**パーセンタイルの定義**・**順位付けの条件**（`ranking`: 融合方式・`ts_rank` の正規化フラグ・RRF の `k`） |
+| 条件 | `alpha`・`limit`・`rounds`・ウォームアップ周回数・`k` 値・**パーセンタイルの定義**・**順位付けの条件**（`ranking`: **バックエンド**・**語彙採点関数**・融合方式・`ts_rank` の正規化フラグ・RRF の `k`） |
 | per-query の生データ | 上位の並び（`eval_key` と**3つのスコア**）・正解ごとの順位（圏外は `null`）・ラウンドごとの latency 2系統 |
 | 集計値 | `recall@1/5/10`・`MRR`・p50/p95（2系統）・タグ別 `recall`・**micro 内訳**・**gold 長さ別の内訳**・**名指しの長文チャンクの追跡** |
 
@@ -41,6 +41,7 @@ make eval EVAL_LABEL=baseline GPU_NOTE="他アプリが 5.7GB 使用中"
 | --- | --- | --- |
 | `nene-recall/eval-report/v1` | 2026-09-01 | 初版 |
 | `nene-recall/eval-report/v2` | 2026-09-02 | 語彙検索の実装に合わせて拡張 |
+| `nene-recall/eval-report/v3` | 2026-09-02 | 比較用の SQLite ストアに合わせて拡張 |
 
 v2 で変えたのは3点。
 
@@ -66,6 +67,29 @@ make eval EVAL_LABEL=alpha-05 EVAL_ALPHA=0.5 # 加重和
 
 🔴 **v1 と v2 のレポートで `ranked_keys` を直接比べないこと。** 集計値
 （`recall` / `MRR` / タグ別）は定義が変わっていないので比較できる。
+
+v3 で変えたのは2点。どちらも「**どのバックエンドで測ったか**」を記録するための
+項目である（[ADR 0017](../../adr/0017-sqlite-store-for-comparison.md) Decision 6）。
+
+1. **`conditions.ranking` に `store` と `lexical_scorer` が増えた。**
+   `store` は `postgres` / `sqlite`、`lexical_scorer` は `ts_rank` / `fts5-bm25`
+2. **`environment` に `sqlite_version` が増えた。**
+   測っていないほうのエンジンの版は空になる（postgres で測れば `sqlite_version`
+   が空、sqlite で測れば `postgres_version` と `pgvector_version` が空）
+
+🔴 **2つのストアの `recall` の差を「ストアの差」と読まないこと。** 差には
+**語彙採点関数の差**（`ts_rank` と `bm25()`）が混ざっている。分けて読むには、
+純ベクトル（`alpha=1.0`）でストアの差を、語彙のみ（`alpha=0.0`）で採点関数の差を
+それぞれ測る。⚠️ `alpha` の最適値は正規化方式に条件付きなので、postgres で
+決めた値を SQLite にそのまま当てはめないこと。
+
+⚠️ v3 の `ts_rank_normalization` と `rrf_k` は **postgres でしか意味を持たない**。
+`store` が `sqlite` のレポートでは 0 になるが、それは「フラグ 0 で測った」では
+なく「その採点関数にそのつまみが無い」という意味である。
+
+```bash
+make eval EVAL_LABEL=sqlite EVAL_STORE=sqlite  # 比較用の SQLite（Postgres は要らない）
+```
 
 ## micro 内訳と gold の長さ別内訳（v2 から）
 
@@ -107,3 +131,6 @@ make eval EVAL_LABEL=alpha-05 EVAL_ALPHA=0.5 # 加重和
 HNSW を入れるときは、**同じ評価セット（同じ sha256）で before / after を測って
 両方をここに残す**。ADR 0007 の価値は「pgvector を選んだこと」ではなく
 「測ってから索引を入れた経路」なので、before が無ければその価値は消える。
+
+比較対象の **Go 側総当たり（SQLite）** も同じ評価セットで測って並べる。
+ADR 0007 はこの比較そのものを成果物に数えている（Phase 1 項目8 / ADR 0017）。

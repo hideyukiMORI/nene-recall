@@ -51,7 +51,10 @@ func defaultOptions(t *testing.T, rounds int) eval.Options {
 // internal/eval はこの中身を解釈しないので、値そのものに意味は無い。
 // 空でないことだけが要求される（条件の記録が欠けたレポートを作らせないため）。
 func testRanking() eval.RankingSettings {
-	return eval.RankingSettings{Fusion: "weighted-sum", TsRankNormalization: 0, RRFK: 60}
+	return eval.RankingSettings{
+		Fusion: "weighted-sum", Store: "postgres", LexicalScorer: "ts_rank",
+		TsRankNormalization: 0, RRFK: 60,
+	}
 }
 
 // newTestRunner は偽の索引と偽の埋め込みで Runner を組む。
@@ -340,7 +343,9 @@ func TestMeasureRejectsInvalidOptions(t *testing.T) {
 		// なれない。融合方式の記録が空なら計測そのものを止める。
 		"融合方式の記録が空": {
 			OrgID: valid.OrgID, Alpha: 1, Limit: 10, Rounds: 1,
-			Ranking: eval.RankingSettings{Fusion: "", TsRankNormalization: 0, RRFK: 60},
+			Ranking: eval.RankingSettings{
+				Fusion: "", Store: "", LexicalScorer: "", TsRankNormalization: 0, RRFK: 60,
+			},
 		},
 	}
 

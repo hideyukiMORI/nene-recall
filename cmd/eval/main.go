@@ -37,9 +37,11 @@ import (
 	"github.com/hideyukiMORI/nene-recall/internal/embed"
 	"github.com/hideyukiMORI/nene-recall/internal/embed/ollama"
 	"github.com/hideyukiMORI/nene-recall/internal/eval"
+	"github.com/hideyukiMORI/nene-recall/internal/index"
 	"github.com/hideyukiMORI/nene-recall/internal/lexical/bigram"
 	"github.com/hideyukiMORI/nene-recall/internal/org"
 	"github.com/hideyukiMORI/nene-recall/internal/store/postgres"
+	"github.com/hideyukiMORI/nene-recall/internal/store/sqlite"
 )
 
 // 🔴 接続情報は compose.yaml・.github/workflows/ci.yml・.env.example・
@@ -57,6 +59,12 @@ const (
 	evalDSN    = "postgres://recall:recall@localhost:5433/recall_eval?sslmode=disable"
 	evalDBName = "recall_eval"
 )
+
+// defaultSQLitePath は -store sqlite のときの既定のファイル。
+//
+// 🔴 bin/ に置くのは .gitignore 済みの生成物置き場だからである。評価用の
+// ファイルは毎回作り直される中間生成物であって、リポジトリに残すものではない。
+const defaultSQLitePath = "bin/recall_eval.db"
 
 // evalTimeout は計測全体の上限。
 //
@@ -96,6 +104,20 @@ var (
 	errEmbedderNotSupported = errors.New("eval: only the ollama embedder is supported")
 	// errEmbedCount は埋め込みが1クエリに対して1本を返さなかったことを表す。
 	errEmbedCount = errors.New("eval: the embedder did not return exactly one vector")
+	// errUnknownStore は -store に未知の名前が渡されたことを表す。
+	//
+	// 🔴 未知の指定を既定へ黙って倒さない。綴り誤りが「postgres で測った」結果
+	// として記録され、後から条件を取り違える。postgres.ParseFusion と同じ理由。
+	errUnknownStore = errors.New("eval: unknown store")
+)
+
+// storeNames は -store に指定できる名前。
+//
+// 🔴 config.Store の値と同じ綴りである。評価だけ別の名前を持つと、
+// レポートの conditions.ranking.store と .env の RECALL_STORE が対応しない。
+const (
+	storeNamePostgres = string(config.StorePostgres)
+	storeNameSQLite   = string(config.StoreSQLite)
 )
 
 func main() {
@@ -127,8 +149,15 @@ type flags struct {
 	// 🔴 生の文字列で持つ。postgres.ParseFusion を通るまでは検証されていない
 	// 入力であり、ここで postgres.Fusion にすると「検証していない値が
 	// Fusion を名乗る」経路が1つ増える。rawOrg と同じ扱いである。
-	fusion  string
-	gpuNote string
+	fusion string
+	// store はどのバックエンドで測るか。
+	//
+	// 🔴 生の文字列で持つ。config.Store にすると「検証していない値が
+	// config.Store を名乗る」経路が1つ増える。rawOrg・fusion と同じ扱いである。
+	store string
+	// sqlitePath は -store sqlite のときに作り直すファイル。
+	sqlitePath string
+	gpuNote    string
 }
 
 // session は1回の実行の入力一式。引数を4つ以下に保つための入れ物 (GO-011)。
@@ -138,19 +167,46 @@ type session struct {
 	opts flags
 }
 
+// evalTarget は評価ハーネスが要求するストアの口。
+//
+// 🔑 internal/eval は具体ストアを知らない層なので (ARC-001)、2つのバックエンドを
+// 1つの型で扱う口はこの配線点が持つ。index.Searcher と index.Writer は契約
+// パッケージのものをそのまま埋め込み、契約に無い2つ（計測用の SearchVector と
+// 後始末の Close）だけをここで足す。
+//
+// 🔴 SearchVector を internal/index に足さない。計測の都合であって検索の契約
+// ではないからである (ADR 0013)。足すと、すべてのストア実装が計測の都合に
+// 付き合わされる。
+type evalTarget interface {
+	index.Searcher
+	index.Writer
+
+	// SearchVector は埋め込み済みのベクトルで検索する。系統2 の計測対象。
+	SearchVector(ctx context.Context, q index.Query, vector []float32) ([]index.Result, error)
+	// Close は接続を閉じる。
+	Close() error
+}
+
 // evalStore は評価用の接続とストア。
 //
-// 環境の記録（PostgreSQL と pgvector の版）を読むのに素の *sql.DB が要るので、
-// ストアと一緒に持ち回る。
+// 環境の記録（エンジンの版）を読むのに素の *sql.DB が要るので、ストアと
+// 一緒に持ち回る。ranking を一緒に持つのは、具体ストアの型が分かるのが
+// ここだけだからである——組み立てた場所で eval の形へ写し替えておかないと、
+// 呼び出し側で型を判別し直すことになる。
 type evalStore struct {
-	store *postgres.Store
-	db    *sql.DB
+	store   evalTarget
+	db      *sql.DB
+	ranking eval.RankingSettings
 }
 
 // serverVersions は DB 側の版。
+//
+// どちらのストアで測っても、使ったエンジンの版だけが埋まる。空の項目は
+// 「そのエンジンでは測っていない」を意味する。
 type serverVersions struct {
 	postgres string
 	pgvector string
+	sqlite   string
 }
 
 // buildStamp はバイナリに埋まったビルド情報。
@@ -195,7 +251,12 @@ func parseFlags() (flags, error) {
 	flag.Int64Var(&opts.rawOrg, "org", 1, "投入・検索に使う org_id")
 	flag.StringVar(&opts.fusion, "fusion", postgres.FusionWeightedSum.String(),
 		"合成方式: "+strings.Join(postgres.FusionNames(), " | ")+
-			"（rrf は alpha を無視する。既定は加重和）")
+			"（rrf は alpha を無視する。既定は加重和。postgres でのみ指定できる）")
+	flag.StringVar(&opts.store, "store", storeNamePostgres,
+		"計測するバックエンド: "+storeNamePostgres+" | "+storeNameSQLite+
+			"（既定は postgres。sqlite は比較実測用・ADR 0017）")
+	flag.StringVar(&opts.sqlitePath, "sqlite-path", defaultSQLitePath,
+		"-store sqlite のときに作り直すファイル")
 	flag.StringVar(&opts.gpuNote, "gpu-note", "",
 		"GPU の占有状況などの自己申告。レポートにそのまま載る")
 	flag.Parse()
@@ -221,14 +282,7 @@ func (s session) run(ctx context.Context) error {
 		return err
 	}
 
-	// 🔴 融合方式はここで解釈する。未知の指定を既定へ黙って倒さないので、
-	// 綴り誤りは「既定で測った」結果として記録されずに止まる。
-	fusion, err := postgres.ParseFusion(s.opts.fusion)
-	if err != nil {
-		return fmt.Errorf("%w: %w", errFlags, err)
-	}
-
-	target, err := s.openEvalStore(ctx, embedder, fusion)
+	target, err := s.openEvalStore(ctx, embedder)
 	if err != nil {
 		return err
 	}
@@ -239,7 +293,7 @@ func (s session) run(ctx context.Context) error {
 		}
 	}()
 
-	measurement, err := s.measure(ctx, target.store, embedder, data.Dataset)
+	measurement, err := s.measure(ctx, target, embedder, data.Dataset)
 	if err != nil {
 		return err
 	}
@@ -287,14 +341,35 @@ func (s session) buildEmbedder() (*ollama.Client, error) {
 	return client, nil
 }
 
-// openEvalStore は評価専用 DB を作り直し、移行済みで空のストアを返す。
+// openEvalStore は評価専用の入れ物を作り直し、移行済みで空のストアを返す。
 //
 // 🔴 開発用の recall にもテスト用の recall_test にも相乗りしない。無関係な行が
 // 1件でも混ざれば、それは順位に入り込んで recall を汚染する。症状は
-// 「recall が少し低い」だけなので気づけない (ADR 0013)。
-func (s session) openEvalStore(
-	ctx context.Context, embedder embed.Embedder, fusion postgres.Fusion,
+// 「recall が少し低い」だけなので気づけない (ADR 0013)。SQLite でも同じで、
+// 前回のファイルを消してから作り直す。
+func (s session) openEvalStore(ctx context.Context, embedder embed.Embedder) (evalStore, error) {
+	switch s.opts.store {
+	case storeNamePostgres:
+		return s.openPostgresStore(ctx, embedder)
+	case storeNameSQLite:
+		return s.openSQLiteStore(ctx, embedder)
+	}
+
+	return evalStore{}, fmt.Errorf("%w: %w: %q (want %q or %q)",
+		errFlags, errUnknownStore, s.opts.store, storeNamePostgres, storeNameSQLite)
+}
+
+// openPostgresStore は評価専用 DB を作り直して繋ぐ。
+func (s session) openPostgresStore(
+	ctx context.Context, embedder embed.Embedder,
 ) (evalStore, error) {
+	// 🔴 融合方式はここで解釈する。未知の指定を既定へ黙って倒さないので、
+	// 綴り誤りは「既定で測った」結果として記録されずに止まる。
+	fusion, err := postgres.ParseFusion(s.opts.fusion)
+	if err != nil {
+		return evalStore{}, fmt.Errorf("%w: %w", errFlags, err)
+	}
+
 	if err := recreateEvalDatabase(ctx); err != nil {
 		return evalStore{}, err
 	}
@@ -313,7 +388,82 @@ func (s session) openEvalStore(
 		return evalStore{}, errors.Join(fmt.Errorf("migrate: %w", err), store.Close())
 	}
 
-	return evalStore{store: store, db: db}, nil
+	settings := store.RankingSettings()
+
+	return evalStore{store: store, db: db, ranking: eval.RankingSettings{
+		Fusion:              settings.Fusion,
+		Store:               settings.Store,
+		LexicalScorer:       settings.LexicalScorer,
+		TsRankNormalization: settings.TsRankNormalization,
+		RRFK:                settings.RRFK,
+	}}, nil
+}
+
+// openSQLiteStore は評価専用のファイルを作り直して繋ぐ。
+//
+// 🔴 -fusion を受け付けない。SQLite 側は加重和しか実装していないので、
+// rrf を指定されたら黙って加重和に倒さずエラーにする (ADR 0017 Decision 4)。
+// 倒すと「rrf で測った」と記録されたレポートが加重和の数字を持つことになる。
+func (s session) openSQLiteStore(
+	ctx context.Context, embedder embed.Embedder,
+) (evalStore, error) {
+	if s.opts.fusion != postgres.FusionWeightedSum.String() {
+		return evalStore{}, fmt.Errorf(
+			"%w: -store %s does not support -fusion %q (only %q is implemented)",
+			errFlags, storeNameSQLite, s.opts.fusion, postgres.FusionWeightedSum.String())
+	}
+
+	if err := recreateEvalFile(s.opts.sqlitePath); err != nil {
+		return evalStore{}, err
+	}
+
+	db, err := sqlite.Open(ctx, s.opts.sqlitePath)
+	if err != nil {
+		return evalStore{}, fmt.Errorf("open evaluation database: %w", err)
+	}
+
+	store, err := sqlite.New(db, embedder, bigram.New())
+	if err != nil {
+		return evalStore{}, errors.Join(fmt.Errorf("build store: %w", err), db.Close())
+	}
+
+	if err := store.Migrate(ctx); err != nil {
+		return evalStore{}, errors.Join(fmt.Errorf("migrate: %w", err), store.Close())
+	}
+
+	settings := store.RankingSettings()
+
+	return evalStore{store: store, db: db, ranking: eval.RankingSettings{
+		Fusion:        settings.Fusion,
+		Store:         settings.Store,
+		LexicalScorer: settings.LexicalScorer,
+		// ⚠️ postgres 専用の2項目は 0 で残す。「フラグ 0 で測った」ではなく
+		// 「この採点関数にそのつまみが無い」という意味である。読み分けは
+		// LexicalScorer が決める (internal/eval/report.go)。
+		TsRankNormalization: 0,
+		RRFK:                0,
+	}}, nil
+}
+
+// recreateEvalFile は評価用の SQLite ファイルを消して作り直す。
+//
+// 🔴 -wal と -shm も一緒に消す。本体だけ消すと、前回のジャーナルが残った
+// ファイルを開くことになり、消したはずの行が復活しうる。
+//
+// 🔑 「作り直す」の実体は削除だけである。ファイルは Open が作り、スキーマは
+// Migrate が作る。postgres 側の DROP DATABASE / CREATE DATABASE と同じ意味。
+func recreateEvalFile(path string) error {
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := os.Remove(path + suffix); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("%w: remove %s: %w", errEvalDatabase, path+suffix, err)
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), reportDirMode); err != nil {
+		return fmt.Errorf("%w: create directory: %w", errEvalDatabase, err)
+	}
+
+	return nil
 }
 
 // recreateEvalDatabase は評価用 DB を落として作り直す。
@@ -363,12 +513,12 @@ func resetDatabase(ctx context.Context, admin *sql.DB) error {
 
 // measure は計測ループを組み立てて走らせる。
 func (s session) measure(
-	ctx context.Context, store *postgres.Store, embedder embed.Embedder, ds eval.Dataset,
+	ctx context.Context, target evalStore, embedder embed.Embedder, ds eval.Dataset,
 ) (eval.Measurement, error) {
 	runner, err := eval.NewRunner(eval.Dependencies{
-		Writer:         store,
-		Searcher:       store,
-		VectorSearcher: store,
+		Writer:         target.store,
+		Searcher:       target.store,
+		VectorSearcher: target.store,
 		EmbedQuery:     embedQuery(embedder),
 	})
 	if err != nil {
@@ -387,28 +537,15 @@ func (s session) measure(
 		Rounds: s.opts.rounds,
 		// 🔴 条件はストアに聞く。フラグの値をそのまま書き写すと、既定を
 		// 変えたときに「指定したつもりの条件」と「実際に使われた条件」が
-		// ずれる。レポートは後者でなければ意味が無い。
-		Ranking: rankingSettings(store),
+		// ずれる。レポートは後者でなければ意味が無い。組み立てた場所で
+		// 写し替えてあるので、ここではその値をそのまま運ぶ。
+		Ranking: target.ranking,
 	})
 	if err != nil {
 		return eval.Measurement{}, fmt.Errorf("measure: %w", err)
 	}
 
 	return measurement, nil
-}
-
-// rankingSettings はストアが実際に使った条件をレポートの形にする。
-//
-// 🔑 internal/eval は具体ストアを知らない層なので (ARC-001)、写し替えは
-// 配線点の仕事である。同じ項目の構造体が2つあるのはその境界の対価である。
-func rankingSettings(store *postgres.Store) eval.RankingSettings {
-	settings := store.RankingSettings()
-
-	return eval.RankingSettings{
-		Fusion:              settings.Fusion,
-		TsRankNormalization: settings.TsRankNormalization,
-		RRFK:                settings.RRFK,
-	}
 }
 
 // alpha は -alpha が未指定なら設定の既定値を使う。
@@ -457,7 +594,7 @@ func (s session) environment(
 		return eval.Environment{}, fmt.Errorf("%w: ollama runtime: %w", errEnvironment, err)
 	}
 
-	versions, err := readServerVersions(ctx, target.db)
+	versions, err := s.readServerVersions(ctx, target.db)
 	if err != nil {
 		return eval.Environment{}, err
 	}
@@ -473,12 +610,26 @@ func (s session) environment(
 		ModelDigest:     runtime.Digest,
 		PostgresVersion: versions.postgres,
 		PgvectorVersion: versions.pgvector,
+		SQLiteVersion:   versions.sqlite,
 		GPUNote:         s.opts.gpuNote,
 	}, nil
 }
 
-// readServerVersions は PostgreSQL と pgvector の版を読む。
-func readServerVersions(ctx context.Context, db *sql.DB) (serverVersions, error) {
+// readServerVersions は測ったエンジンの版を読む。
+//
+// 🔴 測っていないほうのエンジンには問い合わせない。SQLite の接続に
+// SELECT version() を投げても pg_extension は無く、失敗するだけである。
+// 「取れなかった」を空で埋めるのではなく、そもそも問わない。
+func (s session) readServerVersions(ctx context.Context, db *sql.DB) (serverVersions, error) {
+	if s.opts.store == storeNameSQLite {
+		return readSQLiteVersion(ctx, db)
+	}
+
+	return readPostgresVersions(ctx, db)
+}
+
+// readPostgresVersions は PostgreSQL と pgvector の版を読む。
+func readPostgresVersions(ctx context.Context, db *sql.DB) (serverVersions, error) {
 	var pg string
 	if err := db.QueryRowContext(ctx, `SELECT version()`).Scan(&pg); err != nil {
 		return serverVersions{}, fmt.Errorf("%w: postgres version: %w", errEnvironment, err)
@@ -492,7 +643,20 @@ func readServerVersions(ctx context.Context, db *sql.DB) (serverVersions, error)
 		return serverVersions{}, fmt.Errorf("%w: pgvector version: %w", errEnvironment, err)
 	}
 
-	return serverVersions{postgres: pg, pgvector: vector}, nil
+	return serverVersions{postgres: pg, pgvector: vector, sqlite: ""}, nil
+}
+
+// readSQLiteVersion は SQLite の版を読む。
+//
+// 🔴 取れなければ失敗にする。素性の欠けたレポートは後から検証できない、と
+// いうのは Ollama の版に対する判断と同じである。
+func readSQLiteVersion(ctx context.Context, db *sql.DB) (serverVersions, error) {
+	var version string
+	if err := db.QueryRowContext(ctx, `SELECT sqlite_version()`).Scan(&version); err != nil {
+		return serverVersions{}, fmt.Errorf("%w: sqlite version: %w", errEnvironment, err)
+	}
+
+	return serverVersions{postgres: "", pgvector: "", sqlite: version}, nil
 }
 
 // readBuildStamp は git の版と未コミット変更の有無を読む。
@@ -598,6 +762,10 @@ func (s session) logSummary(report eval.Report) {
 		// 🔴 融合方式を必ず出す。alpha だけでは条件が決まらない
 		// （順位融合では alpha は無視される）。
 		slog.String("fusion", report.Conditions.Ranking.Fusion),
+		// 🔴 バックエンドと語彙採点関数も出す。2つのストアを続けて測るときに、
+		// 端末の出力だけでどちらの数字か分からないと取り違える (ADR 0017)。
+		slog.String("store", report.Conditions.Ranking.Store),
+		slog.String("lexical_scorer", report.Conditions.Ranking.LexicalScorer),
 		// micro は正解チャンク単位の内訳。クエリ単位のマクロ平均とは別物で、
 		// 「どのチャンクが拾えていないか」を見るにはこちらが要る。
 		slog.Float64("micro_recall", summary.MicroRecall.Value),

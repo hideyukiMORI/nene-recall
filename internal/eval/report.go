@@ -21,11 +21,20 @@ import (
 //   - conditions に gold_length_threshold_runes と long_chunk_keys を足した
 //   - conditions に ranking（融合方式・ts_rank のフラグ・RRF の k）を足した
 //
+// v3 (2026-09-02) で変えたところ（比較用の SQLite ストア・ADR 0017）:
+//   - conditions.ranking に store と lexical_scorer を足した
+//   - environment に sqlite_version を足した
+//
+// 🔴 v3 の追加はどれも「どちらのストアで測ったか」を記録するためである。
+// 2つのバックエンドのレポートが条件表で見分けられない状態を作らない
+// (ADR 0017 Decision 6)。recall の差には「ストアの差」と「語彙採点関数の差」が
+// 混ざるので、後者を名指しできなければレポートは読めない。
+//
 // 🔴 ranked_keys の名前を残して型だけ変えたのは、旧様式を読む道具が
 // 「フィールドが無い」で静かに素通りするのではなく、型の不一致で落ちるように
 // するためである。v1 のレポート（docs/benchmarks/data/2026-09-0[12]-*.json）は
 // 文字列の配列を持つ。
-const ReportSchema = "nene-recall/eval-report/v2"
+const ReportSchema = "nene-recall/eval-report/v3"
 
 // Report は1回の計測の全記録。JSON でそのまま docs/benchmarks/data/ に残す。
 //
@@ -75,6 +84,14 @@ type Environment struct {
 	PostgresVersion string `json:"postgres_version"`
 	// PgvectorVersion は pg_extension の extversion。
 	PgvectorVersion string `json:"pgvector_version"`
+	// SQLiteVersion は SELECT sqlite_version() の結果。
+	//
+	// 🔴 postgres で測ったレポートでは空、sqlite で測ったレポートでは
+	// PostgresVersion と PgvectorVersion が空になる。どちらのストアで測っても
+	// 「使ったエンジンの版」が残ることが要点である。版が残らない数字は
+	// 後から検証できず、正本になれない
+	// (docs/benchmarks/2026-09-01-baseline.md の追記)。
+	SQLiteVersion string `json:"sqlite_version"`
 	// GPUNote は GPU の占有状況などの自己申告。
 	//
 	// 基準ベンチは他アプリが GPU を 5.7GB / 17% 使っている状態で測られており、
@@ -154,9 +171,24 @@ type Conditions struct {
 type RankingSettings struct {
 	// Fusion は融合方式の名前（例 "weighted-sum" / "rrf"）。
 	Fusion string `json:"fusion"`
+	// Store はバックエンドの名前（"postgres" / "sqlite"）。
+	//
+	// 🔴 これが無いと、2つのストアのレポートを条件表で見分けられない
+	// (ADR 0017 Decision 6)。ファイル名やラベルは人が付けるもので、
+	// 実際に何で測ったかの記録にはならない。
+	Store string `json:"store"`
+	// LexicalScorer は語彙スコアの採点関数の名前（"ts_rank" / "fts5-bm25"）。
+	//
+	// 🔴 2つのストアの recall の差には「ストアの差」と「採点関数の差」が
+	// 混ざる。分けて読むための印であり、Store とは別に要る。
+	LexicalScorer string `json:"lexical_scorer"`
 	// TsRankNormalization は ts_rank に渡した正規化フラグ。
+	//
+	// ⚠️ postgres でしか意味を持たない。store が "sqlite" のレポートでは 0 で
+	// あり、それは「フラグ 0 で測った」という意味ではない。LexicalScorer が
+	// どちらの読み方をすべきかを決める。
 	TsRankNormalization int `json:"ts_rank_normalization"`
-	// RRFK は RRF の平滑化定数。
+	// RRFK は RRF の平滑化定数。TsRankNormalization と同じく postgres 専用。
 	RRFK int `json:"rrf_k"`
 }
 

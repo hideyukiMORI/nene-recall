@@ -58,6 +58,19 @@ const (
 	fusionRRFName         = "rrf"
 )
 
+// storeName はレポートに記録するバックエンドの名前。
+//
+// 🔴 config.Store の値 "postgres" と同じ綴りにしてある。設定で選んだ名前と
+// レポートに出る名前が違うと、条件を追う人が対応を取れない。
+const storeName = "postgres"
+
+// lexicalScorerName は語彙スコアの採点関数の名前。
+//
+// 🔑 sqlite 側は "fts5-bm25" である (ADR 0017)。同じ評価セットで測った2つの
+// レポートを並べたとき、recall の差がどちらの違いによるものかを分けて読む
+// ための印になる。
+const lexicalScorerName = "ts_rank"
+
 // String は方式の外部表現を返す。
 func (f Fusion) String() string {
 	switch f {
@@ -105,6 +118,18 @@ func FusionNames() []string {
 type RankingSettings struct {
 	// Fusion は融合方式の名前。
 	Fusion string
+	// Store はバックエンドの名前。
+	//
+	// 🔴 定数を返すだけの項目だが、レポートに載せるために要る。比較用の
+	// SQLite ストア (ADR 0017) が入って以降、「どちらで測ったか」が記録から
+	// 読めなければレポートを並べられない。
+	Store string
+	// LexicalScorer は語彙スコアの採点関数の名前。
+	//
+	// 🔴 postgres は ts_rank、sqlite は FTS5 の bm25 を使う。2つのストアの
+	// recall の差には「ストアの差」と「採点関数の差」が混ざるので、後者を
+	// 名指しできる印が要る (ADR 0017)。
+	LexicalScorer string
 	// TsRankNormalization は ts_rank に渡した正規化フラグ。
 	TsRankNormalization int
 	// RRFK は RRF の平滑化定数。方式が RRF でなくても記録する

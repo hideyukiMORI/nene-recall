@@ -57,7 +57,8 @@ func TestNewReportCarriesEnvironmentAndInputs(t *testing.T) {
 		GitRevision: "abc123", GitModified: false, GoVersion: "go1.27.0",
 		EmbedderID: "bge-m3:1024", OllamaVersion: "0.33.2",
 		ModelDigest:     "7907646426070047a77226ac3e684fbbe8410524f7b4a74d02837e43f2146bab",
-		PostgresVersion: "17.11", PgvectorVersion: "0.8.6", GPUNote: "占有ベンチではない",
+		PostgresVersion: "17.11", PgvectorVersion: "0.8.6", SQLiteVersion: "",
+		GPUNote: "占有ベンチではない",
 	}
 
 	inputs := testReportInputs()
@@ -120,7 +121,8 @@ func TestReportMarshalsToJSON(t *testing.T) {
 		eval.Environment{
 			GitRevision: "abc", GitModified: true, GoVersion: "go1.27.0",
 			EmbedderID: "bge-m3:1024", OllamaVersion: "0.33.2", ModelDigest: "digest",
-			PostgresVersion: "17.11", PgvectorVersion: "0.8.6", GPUNote: "",
+			PostgresVersion: "17.11", PgvectorVersion: "0.8.6", SQLiteVersion: "",
+			GPUNote: "",
 		},
 		eval.Inputs{
 			Corpus:  eval.FileInput{Path: "c", SHA256: "1", Count: 1},
@@ -210,7 +212,10 @@ func jsonTestMeasurement() eval.Measurement {
 //
 // internal/eval はこの中身を解釈しない。JSON に項目が出ることだけが要求である。
 func testReportRanking() eval.RankingSettings {
-	return eval.RankingSettings{Fusion: "weighted-sum", TsRankNormalization: 0, RRFK: 60}
+	return eval.RankingSettings{
+		Fusion: "weighted-sum", Store: "postgres", LexicalScorer: "ts_rank",
+		TsRankNormalization: 0, RRFK: 60,
+	}
 }
 
 // testReportInputs はレポートの検査に使う入力の同一性。

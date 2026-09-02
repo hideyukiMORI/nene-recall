@@ -143,7 +143,8 @@ func TestEncodeReportProducesReadableJSON(t *testing.T) {
 		eval.Environment{
 			GitRevision: "abc", GitModified: false, GoVersion: "go1.27.0",
 			EmbedderID: "bge-m3:1024", OllamaVersion: "0.33.2", ModelDigest: "digest",
-			PostgresVersion: "17.11", PgvectorVersion: "0.8.6", GPUNote: "",
+			PostgresVersion: "17.11", PgvectorVersion: "0.8.6", SQLiteVersion: "",
+			GPUNote: "",
 		},
 		eval.Inputs{
 			Corpus:  eval.FileInput{Path: "c", SHA256: "1", Count: 1},

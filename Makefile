@@ -31,9 +31,15 @@ EVAL_OUT ?= docs/benchmarks/data/$(shell date +%F)-eval-$(EVAL_LABEL).json
 EVAL_ALPHA ?=
 EVAL_ROUNDS ?=
 EVAL_FUSION ?=
+# 🔴 EVAL_STORE は「どのバックエンドで測るか」。既定は cmd/eval の postgres。
+#    sqlite は比較実測用（ADR 0017）。rrf は postgres でしか指定できない。
+EVAL_STORE ?=
+EVAL_SQLITE_PATH ?=
 EVAL_FLAGS := $(if $(EVAL_ALPHA),-alpha $(EVAL_ALPHA)) \
               $(if $(EVAL_ROUNDS),-rounds $(EVAL_ROUNDS)) \
-              $(if $(EVAL_FUSION),-fusion $(EVAL_FUSION))
+              $(if $(EVAL_FUSION),-fusion $(EVAL_FUSION)) \
+              $(if $(EVAL_STORE),-store $(EVAL_STORE)) \
+              $(if $(EVAL_SQLITE_PATH),-sqlite-path $(EVAL_SQLITE_PATH))
 
 .PHONY: all check build run test cover cover-check vet fmt fmt-check lint conformance tidy tidy-check vuln tools clean eval
 
@@ -139,6 +145,12 @@ tools:
 ## 前提: docker compose up -d（PostgreSQL）と Windows 側の Ollama、.env の設定。
 ## 評価用 DB recall_eval は毎回作り直される（開発用の recall には触らない）。
 ##
+## 🔑 EVAL_STORE=sqlite なら PostgreSQL は要らない（Ollama は要る）。評価用の
+## ファイル bin/recall_eval.db を毎回作り直す。⚠️ 2つのストアの数字を比べる
+## ときは、必ず同じ評価セット（同じ sha256）・同じ alpha で測ること。
+## recall の差には「ストアの差」と「語彙採点関数の差」（ts_rank と bm25）が
+## 混ざるので、レポートの conditions.ranking を見て分けて読む（ADR 0017）。
+##
 ## 🔴 go run ではなく go build してから走らせる。go run はバイナリに VCS 情報を
 ## 埋めないので、vcs.revision が空になる（2026-09-01 実測）。どのコードで測った
 ## 数字か分からないレポートは、後から検証できない。
@@ -147,6 +159,7 @@ tools:
 ##     make eval EVAL_LABEL=alpha-00 EVAL_ALPHA=0   （純語彙）
 ##     make eval EVAL_LABEL=alpha-10 EVAL_ALPHA=1   （純ベクトル・基準線と同条件）
 ##     make eval EVAL_LABEL=rrf EVAL_FUSION=rrf      （順位融合・alpha は無視される）
+##     make eval EVAL_LABEL=sqlite EVAL_STORE=sqlite （比較用の SQLite・ADR 0017）
 ##
 ## 🔴 条件を変えたら EVAL_LABEL も変えること。同じ名前で上書きすると、
 ## 前の条件のレポートが消えて before/after を並べられなくなる。
