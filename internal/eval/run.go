@@ -34,14 +34,20 @@ const DefaultRounds = 5
 // 1サンプル混ざるだけで p95 が壊れる。
 const WarmupRounds = 1
 
-// alphaNote は alpha が調整済みでないことをレポート自身に書き残す文言。
+// alphaNote は alpha の読み方をレポート自身に書き残す文言。
 //
-// 🔴 レポートは単体で読まれる。数字だけを載せると、読んだ人はそれが調整済みの
-// 値だと受け取る。alpha に根拠が無いことは要件定義 Q-3 の未決事項であり、
-// この評価が決着させる対象そのものである
-// (docs/adr/0009-retrieval-evaluation-is-in-scope.md)。
-const alphaNote = "not tuned: alpha is a placeholder until this evaluation settles it " +
-	"(requirements Q-3 / ADR 0009). Do not read this value as calibrated."
+// 🔴 レポートは単体で読まれる。数字だけを載せると、読んだ人はそれが普遍的に
+// 調整済みの値だと受け取る。既定 0.8 は実測から選んだ値だが、それは測ったときの
+// 条件（評価セット・埋め込みモデル・分割器・語彙スコアの正規化方式）に紐づく値で
+// あって最適値ではない
+// (docs/adr/0015-fusion-is-weighted-sum-with-alpha-0.8.md の Decision 3)。
+//
+// ⚠️ 文言だけを ADR 0015 に合わせてある。フィールド名・型・JSON の形
+// (alpha_note) は変えていないので、過去のレポートとの比較は今までどおり効く。
+const alphaNote = "the default 0.8 was chosen on the 2026-09-02 eval set " +
+	"(bge-m3:1024, bigram, per-query lexical normalization); it is the centre of the " +
+	"0.7-0.9 plateau, not a universal optimum (ADR 0015). " +
+	"Re-measure if any of those conditions change."
 
 // GoldLengthThreshold は gold チャンクを長短に分ける文字数の閾値。
 //

@@ -189,7 +189,7 @@ func parseFlags() (flags, error) {
 	flag.StringVar(&opts.tags, "tags", "testdata/eval/tags.json", "タグ語彙 (JSON)")
 	flag.StringVar(&opts.out, "out", "", "レポートの書き出し先 (JSON・必須)")
 	flag.Float64Var(&opts.alpha, "alpha", alphaFromConfig,
-		"合成の重み。未指定なら RECALL_DEFAULT_ALPHA を使う（根拠はまだ無い・要件定義 Q-3）")
+		"合成の重み。未指定なら RECALL_DEFAULT_ALPHA を使う（既定 0.8 の根拠は ADR 0015・条件付き）")
 	flag.IntVar(&opts.limit, "limit", eval.DefaultLimit, "1クエリあたりの取得件数")
 	flag.IntVar(&opts.rounds, "rounds", eval.DefaultRounds, "各クエリを繰り返す回数")
 	flag.Int64Var(&opts.rawOrg, "org", 1, "投入・検索に使う org_id")
@@ -413,7 +413,9 @@ func rankingSettings(store *postgres.Store) eval.RankingSettings {
 
 // alpha は -alpha が未指定なら設定の既定値を使う。
 //
-// ⚠️ どちらの値にも根拠は無い（要件定義 Q-3）。この評価が決着させる対象である。
+// ⚠️ 既定 0.8 は ADR 0015 が実測から選んだ値だが、測ったときの条件に紐づく
+// 条件付きの値である。-alpha で明示した値のほうは、掃引の1点でしかない。
+// どちらもレポートの alpha_note が但し書きを付けて回る。
 func (s session) alpha() float32 {
 	if s.opts.alpha < 0 {
 		return s.cfg.DefaultAlpha
