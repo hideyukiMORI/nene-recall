@@ -187,6 +187,7 @@ func TestValidateRejectsBadCombinations(t *testing.T) {
 		},
 		"未知の Store":  {func(c *config.Config) { c.Store = "qdrant" }, config.ErrUnknownOption},
 		"kagome に切替": {func(c *config.Config) { c.Tokenizer = config.TokenizerKagome }, nil},
+		"union に切替":  {func(c *config.Config) { c.Tokenizer = config.TokenizerUnion }, nil},
 		"未知の Tokenizer": {
 			func(c *config.Config) { c.Tokenizer = "mecab" },
 			config.ErrUnknownOption,
@@ -234,18 +235,23 @@ func TestEmbedderIDDoesNotLeakAPIKey(t *testing.T) {
 // TestLoadReadsTheTokenizer は RECALL_TOKENIZER が読まれることを確認する。
 //
 // 🔴 既定が bigram であること自体は TestLoadAppliesDocumentedDefaults が見る。
-// ここで見るのは「選べること」で、選べなければ ADR 0018 の比較実測そのものが
-// できない。
+// ここで見るのは「選べること」で、選べなければ ADR 0018・ADR 0021 の比較実測
+// そのものができない。既定でない選択肢を全部踏むのは、片方だけ配線が
+// 抜けていても既定へ落ちずに起動が失敗する、という性質を保つためである。
 func TestLoadReadsTheTokenizer(t *testing.T) {
-	setMinimalEnv(t)
-	t.Setenv("RECALL_TOKENIZER", "kagome")
+	for _, want := range []config.Tokenizer{config.TokenizerKagome, config.TokenizerUnion} {
+		t.Run(string(want), func(t *testing.T) {
+			setMinimalEnv(t)
+			t.Setenv("RECALL_TOKENIZER", string(want))
 
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load() が失敗した: %v", err)
-	}
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("Load() が失敗した: %v", err)
+			}
 
-	if got, want := cfg.Tokenizer, config.TokenizerKagome; got != want {
-		t.Errorf("Tokenizer = %q, want %q", got, want)
+			if got := cfg.Tokenizer; got != want {
+				t.Errorf("Tokenizer = %q, want %q", got, want)
+			}
+		})
 	}
 }

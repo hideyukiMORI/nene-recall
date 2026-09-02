@@ -9,6 +9,7 @@ import (
 	"github.com/hideyukiMORI/nene-recall/internal/lexical"
 	"github.com/hideyukiMORI/nene-recall/internal/lexical/bigram"
 	"github.com/hideyukiMORI/nene-recall/internal/lexical/kagome"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical/union"
 	"github.com/hideyukiMORI/nene-recall/internal/store/postgres"
 )
 
@@ -31,6 +32,10 @@ import (
 // 片方だけで往復を見ても「もう片方は 'simple' パーサと噛み合っているか」は
 // 分からない。形態素側は原形（表層に現れない文字列）をトークンにするので、
 // bigram で成り立った性質がそのまま成り立つとは限らない。
+//
+// 🔴 和集合 (internal/lexical/union) も同じ理由で回す。ADR 0021 で3つ目に
+// なった。構成要素が両方閉じていても和集合が閉じるとは限らない——連結すると
+// lexeme_text 上の位置が変わり、'simple' パーサが割った語の隣接の意味が変わる。
 
 // roundTripTokenizer は往復同一性を確かめる分割器1つ。
 type roundTripTokenizer struct {
@@ -38,7 +43,7 @@ type roundTripTokenizer struct {
 	tokenizer lexical.Tokenizer
 }
 
-// roundTripTokenizers は実物の分割器を両方返す。
+// roundTripTokenizers は実物の分割器をすべて返す。
 func roundTripTokenizers(t *testing.T) []roundTripTokenizer {
 	t.Helper()
 
@@ -47,9 +52,15 @@ func roundTripTokenizers(t *testing.T) []roundTripTokenizer {
 		t.Fatalf("kagome.New(): %v", err)
 	}
 
+	both, err := union.New()
+	if err != nil {
+		t.Fatalf("union.New(): %v", err)
+	}
+
 	return []roundTripTokenizer{
 		{name: "bigram", tokenizer: bigram.New()},
 		{name: "kagome", tokenizer: morphological},
+		{name: "union", tokenizer: both},
 	}
 }
 

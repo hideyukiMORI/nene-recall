@@ -24,6 +24,7 @@ import (
 	"github.com/hideyukiMORI/nene-recall/internal/lexical"
 	"github.com/hideyukiMORI/nene-recall/internal/lexical/bigram"
 	"github.com/hideyukiMORI/nene-recall/internal/lexical/kagome"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical/union"
 	"github.com/hideyukiMORI/nene-recall/internal/store/postgres"
 	"github.com/hideyukiMORI/nene-recall/internal/store/sqlite"
 )
@@ -192,11 +193,11 @@ func buildEmbedder(cfg config.Config) (embedderBundle, error) {
 
 // buildTokenizer は設定から語彙分割器を組み立てる。
 //
-// 🔴 既定は bigram である。kagome は比較実測のために選べる経路であって、
-// 既定を移すのは実測を見て ADR を書いてからである (ADR 0018)。
+// 🔴 既定は bigram である。kagome と union は比較実測のために選べる経路で
+// あって、既定を移すのは実測を見て ADR を書いてからである (ADR 0018・ADR 0021)。
 //
-// ⚠️ kagome.New だけが error を返す。辞書の読み込みを含むためで、契約
-// (lexical.Tokenizer) の違いではない。この非対称はこの関数1つに閉じる。
+// ⚠️ bigram.New だけが error を返さない。辞書の読み込みを含むかどうかの違いで
+// あって、契約 (lexical.Tokenizer) の違いではない。この非対称はこの関数1つに閉じる。
 func buildTokenizer(cfg config.Config) (lexical.Tokenizer, error) {
 	switch cfg.Tokenizer {
 	case config.TokenizerBigram:
@@ -208,6 +209,13 @@ func buildTokenizer(cfg config.Config) (lexical.Tokenizer, error) {
 		}
 
 		return morphological, nil
+	case config.TokenizerUnion:
+		both, err := union.New()
+		if err != nil {
+			return nil, fmt.Errorf("build union tokenizer: %w", err)
+		}
+
+		return both, nil
 	}
 
 	// config.validate が未知の値を既に拒否しているので、ここへは来ない。

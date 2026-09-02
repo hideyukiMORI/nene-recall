@@ -42,6 +42,7 @@ import (
 	"github.com/hideyukiMORI/nene-recall/internal/lexical"
 	"github.com/hideyukiMORI/nene-recall/internal/lexical/bigram"
 	"github.com/hideyukiMORI/nene-recall/internal/lexical/kagome"
+	"github.com/hideyukiMORI/nene-recall/internal/lexical/union"
 	"github.com/hideyukiMORI/nene-recall/internal/org"
 	"github.com/hideyukiMORI/nene-recall/internal/store/postgres"
 	"github.com/hideyukiMORI/nene-recall/internal/store/sqlite"
@@ -145,7 +146,14 @@ const (
 const (
 	tokenizerNameBigram = string(config.TokenizerBigram)
 	tokenizerNameKagome = string(config.TokenizerKagome)
+	tokenizerNameUnion  = string(config.TokenizerUnion)
 )
+
+// tokenizerNameList は -tokenizer のヘルプとエラーに出す選択肢の一覧。
+//
+// 🔑 名前を1箇所から作る。選択肢を足したときにヘルプかエラーの片方だけ古く
+// なると、「指定できない値が指定できるように読める」文言が残る。
+const tokenizerNameList = tokenizerNameBigram + " | " + tokenizerNameKagome + " | " + tokenizerNameUnion
 
 // alphaNotePostgres / alphaNoteSQLite は alpha の読み方をレポート自身に
 // 書き残す文言。
@@ -375,8 +383,8 @@ func parseFlags() (flags, error) {
 	flag.StringVar(&opts.sqlitePath, "sqlite-path", defaultSQLitePath,
 		"-store sqlite のときに作り直すファイル")
 	flag.StringVar(&opts.tokenizer, "tokenizer", tokenizerNameBigram,
-		"語彙分割器: "+tokenizerNameBigram+" | "+tokenizerNameKagome+
-			"（既定は bigram。kagome は比較実測用・ADR 0018）")
+		"語彙分割器: "+tokenizerNameList+
+			"（既定は bigram。kagome は比較実測用・ADR 0018。union は両者の連結・ADR 0021）")
 	flag.StringVar(&opts.distractors, "distractors", "",
 		"正解にならない紛れ込みの JSONL（省略可・ADR 0019）。"+
 			"評価コーパスの投入後にバッチで投入する。正解注釈には一切触れない")
@@ -491,7 +499,7 @@ func (s session) openEvalStore(ctx context.Context, embedder embed.Embedder) (ev
 // レポートが bigram の数字を持つことになり、ADR 0018 が比較したいものを
 // 比較できなくなる。postgres.ParseFusion・openEvalStore と同じ判断である。
 //
-// ⚠️ kagome.New だけが error を返す（辞書の読み込みを含むため）。契約
+// ⚠️ bigram.New だけが error を返さない（辞書の読み込みを含まないため）。契約
 // (lexical.Tokenizer) の違いではない。
 func buildTokenizer(name string) (lexical.Tokenizer, error) {
 	switch name {
@@ -504,10 +512,17 @@ func buildTokenizer(name string) (lexical.Tokenizer, error) {
 		}
 
 		return morphological, nil
+	case tokenizerNameUnion:
+		both, err := union.New()
+		if err != nil {
+			return nil, fmt.Errorf("build union tokenizer: %w", err)
+		}
+
+		return both, nil
 	}
 
-	return nil, fmt.Errorf("%w: %w: %q (want %q or %q)",
-		errFlags, errUnknownTokenizer, name, tokenizerNameBigram, tokenizerNameKagome)
+	return nil, fmt.Errorf("%w: %w: %q (want %s)",
+		errFlags, errUnknownTokenizer, name, tokenizerNameList)
 }
 
 // openPostgresStore は評価専用 DB を作り直して繋ぐ。
