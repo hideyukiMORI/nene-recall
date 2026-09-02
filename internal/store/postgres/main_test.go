@@ -1,7 +1,10 @@
 package postgres_test
 
 import (
+	"context"
 	"database/sql"
+	"strconv"
+	"syscall"
 	"testing"
 
 	// 管理用の接続もテスト用 DB の作成に pgx を使う。
@@ -25,10 +28,41 @@ import (
 //   - ローカルと CI が同じ DSN で同じテストを走らせることが QLT-003 の要求であり、
 //     env で分岐できる余地を作ると「CI でしか落ちない」失敗が生まれる
 const (
-	adminDSN   = "postgres://recall:recall@localhost:5433/recall?sslmode=disable"
-	testDSN    = "postgres://recall:recall@localhost:5433/recall_test?sslmode=disable"
-	testDBName = "recall_test"
+	// dsnHead / dsnTail は DSN の「DB 名以外」である。可変なのは DB 名だけで、
+	// ホスト・ポート・認証情報は adminDSN とテスト用 DSN で同一でなければならない。
+	dsnHead = "postgres://recall:recall@localhost:5433/"
+	dsnTail = "?sslmode=disable"
+
+	adminDSN = dsnHead + "recall" + dsnTail
+
+	// testDBPrefix は接尾辞（プロセス ID）の前に付く固定部分。
+	testDBPrefix = "recall_test_"
 )
+
+// testDBName は自プロセス専用のテスト用 DB 名を返す。
+//
+// 🔴 固定名 recall_test を使わないのは、同じ Postgres に対して make check が
+// 2本同時に走ると壊れるからである。2026-09-02 に実測: 両方の go test が
+// `duplicate key value violates unique constraint "pg_database_datname_index"` で
+// 全滅した（片方の CREATE DATABASE と、もう片方の DROP → CREATE が競る）。
+// 設計→実装のループでは複数の作業木が並走するので、テストが互いを壊さないことが要る。
+//
+// 接尾辞はテストバイナリのプロセス ID。同じパッケージのテストは1プロセスで走るので
+// 1プロセス＝1 DB になり、名前は実行中ずっと同じで、他プロセスとは決して衝突しない。
+//
+// 🔴 os ではなく syscall を使っている。ARC-005（docs/coding-rules.md）が禁じるのは
+// 「環境変数・シグナル・標準入出力」で、自分のプロセス ID はそのどれでもない。
+// ただし機械強制の depguard は os パッケージ全体を拒むため、粒度が規則より粗い。
+// os.Getpid の実体は syscall.Getpid であり、ここで読んでいるのは環境ではなく
+// 自分自身の識別子である。環境変数を読みたくなったら config 経由にすること。
+func testDBName() string {
+	return testDBPrefix + strconv.Itoa(syscall.Getpid())
+}
+
+// testDSN は指定したテスト用 DB への接続文字列を組み立てる。
+func testDSN(dbName string) string {
+	return dsnHead + dbName + dsnTail
+}
 
 // testStore はテスト対象のストアと、検証のための素の接続。
 type testStore struct {
@@ -84,7 +118,7 @@ func newTestStoreWith(t *testing.T, spec storeSpec) *testStore {
 
 	recreateTestDatabase(t)
 
-	db, err := postgres.Open(t.Context(), testDSN)
+	db, err := postgres.Open(t.Context(), testDSN(testDBName()))
 	if err != nil {
 		t.Fatalf("テスト用 DB へ接続できない: %v", err)
 	}
@@ -111,8 +145,14 @@ func newTestStoreWith(t *testing.T, spec storeSpec) *testStore {
 //
 // 別 DB にするのは開発中のデータを壊さないため。作り直すのは、前回の残骸に
 // 依存したテストが「たまたま通る」状態を作らないため。
+//
+// 🔴 触るのは自分の recall_test_<pid> だけである。recall_test_% をまとめて
+// 掃除しないこと——その名前の DB は今まさに別プロセスのテストが使っている
+// 可能性があり、それは今回直した障害そのものになる。
 func recreateTestDatabase(t *testing.T) {
 	t.Helper()
+
+	name := testDBName()
 
 	admin, err := sql.Open("pgx", adminDSN)
 	if err != nil {
@@ -132,12 +172,58 @@ func recreateTestDatabase(t *testing.T) {
 	// FORCE は残った接続を切ってから落とす（PostgreSQL 13 以降）。
 	// 前のテストが返し損ねた接続で DROP が失敗するのを防ぐ。
 	if _, err := admin.ExecContext(t.Context(),
-		`DROP DATABASE IF EXISTS `+testDBName+` WITH (FORCE)`); err != nil {
+		`DROP DATABASE IF EXISTS `+name+` WITH (FORCE)`); err != nil {
 		t.Fatalf("テスト用 DB を落とせない: %v", err)
 	}
 
-	if _, err := admin.ExecContext(t.Context(), `CREATE DATABASE `+testDBName); err != nil {
+	if _, err := admin.ExecContext(t.Context(), `CREATE DATABASE `+name); err != nil {
 		t.Fatalf("テスト用 DB を作れない: %v", err)
+	}
+
+	// 作った DB は必ず片付ける。名前がプロセスごとに変わるようになったので、
+	// 残すと実行のたびに recall_test_<pid> が増え続ける。
+	//
+	// 🔴 TestMain に置いていない。TestMain には *testing.T が無く、
+	// 後片付けの失敗を報告する手段が（GO-014 が log/fmt の直書きを禁じている以上）
+	// 無くなるためである。t.Cleanup なら報告先の t が手元にあり、この関数を
+	// 呼んだテストだけが自分の後始末を持つ。
+	//
+	// ⚠️ ここを通らない終わり方（kill・パニックでのプロセス毎死）では DB が残る。
+	// 残骸は手で落とすこと:
+	//   psql "postgres://recall:recall@localhost:5433/recall" \
+	//     -c 'DROP DATABASE recall_test_12345 WITH (FORCE)'
+	t.Cleanup(func() { dropTestDatabase(t, name) })
+}
+
+// dropTestDatabase はテスト用 DB を落とす。
+//
+// 管理接続を開き直しているのは、recreateTestDatabase の接続が defer で
+// 既に閉じているため。片付けは失敗しても後続のテストを止めないので Errorf で報告する。
+func dropTestDatabase(t *testing.T, name string) {
+	t.Helper()
+
+	admin, err := sql.Open("pgx", adminDSN)
+	if err != nil {
+		t.Errorf("片付けの管理接続を開けない: %v", err)
+
+		return
+	}
+
+	defer func() {
+		if err := admin.Close(); err != nil {
+			t.Errorf("片付けの管理接続を閉じられない: %v", err)
+		}
+	}()
+
+	// FORCE は返し損ねた接続を切ってから落とす。テストが失敗して Store を
+	// 閉じられなかった場合でも、DB を残さない。
+	//
+	// 🔴 t.Context() をそのまま渡さない。t.Context() は Cleanup が呼ばれる
+	// 直前に取り消されるので（Go 1.24 以降）、そのまま使うと DROP が
+	// context canceled で必ず失敗し、DB が残る。取り消しだけ外して使う。
+	if _, err := admin.ExecContext(context.WithoutCancel(t.Context()),
+		`DROP DATABASE IF EXISTS `+name+` WITH (FORCE)`); err != nil {
+		t.Errorf("テスト用 DB を片付けられない: %v", err)
 	}
 }
 
@@ -155,7 +241,7 @@ func attachStore(t *testing.T, e embed.Embedder) *postgres.Store {
 func attachStoreWith(t *testing.T, spec storeSpec) *postgres.Store {
 	t.Helper()
 
-	db, err := postgres.Open(t.Context(), testDSN)
+	db, err := postgres.Open(t.Context(), testDSN(testDBName()))
 	if err != nil {
 		t.Fatalf("テスト用 DB へ接続できない: %v", err)
 	}

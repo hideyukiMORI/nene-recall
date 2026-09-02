@@ -31,7 +31,7 @@ func newE2EServer(t *testing.T, ts *testStore) http.Handler {
 	cfg := config.Config{
 		Addr:            ":0",
 		Store:           config.StorePostgres,
-		DatabaseURL:     testDSN,
+		DatabaseURL:     testDSN(testDBName()),
 		DBPath:          "recall.db",
 		EmbedProvider:   config.EmbedProviderOllama,
 		EmbedModel:      "fake",
