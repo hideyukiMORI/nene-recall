@@ -5,6 +5,9 @@
 （[`2026-09-02-lexical-prediction.md`](2026-09-02-lexical-prediction.md)・コミット `d9eda6e`）。
 
 ⚠️ **本書は測定結果のみ。判断は ADR 0014（Q-1/Q-2）と ADR 0015（Q-3）で行う。**
+判断は 2026-09-02 に着地した:
+[ADR 0014 — 語彙検索は Go 側 bigram + `tsvector`、長さ正規化なし](../adr/0014-lexical-search-is-tsvector-over-bigram.md) /
+[ADR 0015 — 合成は加重和（クエリ内正規化）・`alpha` 既定 0.8](../adr/0015-fusion-is-weighted-sum-with-alpha-0.8.md)。
 
 ## 条件
 

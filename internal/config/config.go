@@ -84,10 +84,16 @@ type Config struct {
 	// 構造体ごと %v で出力しても値が漏れる。ロギング時は個別フィールドを選ぶ。
 	VoyageAPIKey string
 
-	// DefaultAlpha は合成の既定の重み。RECALL_DEFAULT_ALPHA、既定 0.7。
+	// DefaultAlpha は合成の既定の重み。RECALL_DEFAULT_ALPHA、既定 0.8。
 	//
-	// 0.7 に根拠は無い。ADR 0009 の評価セットで最適値を探すまでの暫定値である
-	// (要件定義 Q-3)。
+	// 0.8 は 2026-09-02 の評価セット・bge-m3:1024・bigram・語彙スコアのクエリ内
+	// 正規化という条件で、プラトー (0.7〜0.9) の中心として選んだ値である
+	// (ADR 0015)。argmax ではなくプラトーの中心を採るのは、58クエリの指標が
+	// 1クエリ = 0.017 揺れるため、最大点はゆらぎに引きずられるからである。
+	//
+	// 🔴 「最適値」ではない。正規化方式・分割器 (Tokenizer.ID)・埋め込みモデル
+	// (Embedder.ID)・候補集合の作り方のどれかを変えたら測り直すこと
+	// (ADR 0015 Decision 3)。
 	DefaultAlpha float32
 }
 
@@ -106,7 +112,7 @@ func Load() (Config, error) {
 		EmbedDimensions: 1024,
 		OllamaBaseURL:   env("RECALL_OLLAMA_URL", "http://localhost:11434"),
 		VoyageAPIKey:    os.Getenv("VOYAGE_API_KEY"),
-		DefaultAlpha:    0.7,
+		DefaultAlpha:    0.8,
 	}
 
 	if v := os.Getenv("RECALL_EMBED_DIMENSIONS"); v != "" {

@@ -247,9 +247,10 @@ func TestSearchRoundTripsOptionalColumns(t *testing.T) {
 
 // TestSearchScoresAreConsistent はスコアの分解が保たれることを見る。
 //
-// 語彙検索が入るまで LexicalScore は 0 で、合成は alpha*vector に縮退する。
-// 🔴 alpha の値そのものに根拠はまだ無い（要件定義 Q-3）。ここで確かめているのは
-// 「合成式が分解と一致すること」であって、alpha が適切であることではない。
+// このコーパス（遠い / 近い / 中くらい）はクエリ「問い」と bigram を1つも
+// 共有しないので LexicalScore は 0 になり、合成は alpha*vector に縮退する。
+// 🔴 alpha の値そのものが適切かはここでは問わない（既定の根拠は ADR 0015）。
+// ここで確かめているのは「合成式が分解と一致すること」だけである。
 func TestSearchScoresAreConsistent(t *testing.T) {
 	ts := rankedStore(t)
 
@@ -263,7 +264,7 @@ func TestSearchScoresAreConsistent(t *testing.T) {
 
 	got := results[0]
 	if got.LexicalScore != 0 {
-		t.Errorf("LexicalScore = %v, want 0（語彙検索は未実装）", got.LexicalScore)
+		t.Errorf("LexicalScore = %v, want 0（語彙一致が無いコーパス）", got.LexicalScore)
 	}
 
 	if want := 0.5 * got.VectorScore; got.Score != want {

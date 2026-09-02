@@ -478,7 +478,7 @@ func TestMeasureRecordsTheConditions(t *testing.T) {
 	}
 
 	if c.AlphaNote == "" {
-		t.Error("AlphaNote が空。alpha に根拠が無いことをレポート自身に残すこと")
+		t.Error("AlphaNote が空。alpha の読み方の但し書きをレポート自身に残すこと")
 	}
 
 	if !equalInts(c.KValues, eval.KValues()) {

@@ -442,8 +442,9 @@ func (r scannedRow) toResult(q index.Query) index.Result {
 			PageNumber:   nullableInt(r.pageNumber),
 			SectionLabel: nullableString(r.sectionLabel),
 		},
-		// 🔴 alpha の値に根拠はまだ無い（要件定義 Q-3）。ADR 0009 の評価セットで
-		// 最適値を決めるまで、この係数を「調整済み」として扱わないこと。
+		// 🔴 alpha の既定 0.8 は ADR 0015 が実測から選んだ条件付きの値である。
+		// 条件（正規化方式・分割器・埋め込みモデル・候補集合の作り方）が変われば
+		// 測り直す対象なので、この係数を普遍的な「最適値」として扱わないこと。
 		VectorScore:  float32(r.vectorScore),
 		LexicalScore: float32(r.lexicalScore),
 		Score:        float32(r.score),

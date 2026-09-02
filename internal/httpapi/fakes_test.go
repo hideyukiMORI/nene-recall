@@ -86,7 +86,7 @@ func testConfig() config.Config {
 		EmbedDimensions: 1024,
 		OllamaBaseURL:   "http://localhost:11434",
 		VoyageAPIKey:    "",
-		DefaultAlpha:    0.7,
+		DefaultAlpha:    0.8,
 	}
 }
 
