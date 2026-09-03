@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -569,6 +570,262 @@ func TestCandidateSearchAppliesEfSearch(t *testing.T) {
 
 	if want := strconv.Itoa(efSearch); got != want {
 		t.Errorf("hnsw.ef_search = %q, want %q（SET LOCAL が届いていない）", got, want)
+	}
+}
+
+// tieContent は語彙スコアが同点になる行の本文。
+//
+// 本文が同一なら lexemes も同一で、同じクエリに対する ts_rank も同一になる。
+// ⇒ 「同点」を作るのに ts_rank の内部を知る必要が無い。
+const tieContent = "tie_term filler"
+
+// tieQuery は同点の行だけに当たる検索語。
+//
+// コーパスの本文（candidateContent）は recall_store か無関係のどちらかなので、
+// この語では 1 件も当たらない。⇒ 語彙側 top-K は同点の行だけで埋まる。
+const tieQuery = "tie_term"
+
+// tieGroupSize は同点で並べる行数。K より多くして、top-K の境界が
+// 同点の途中を切るようにする。
+const tieGroupSize = 40
+
+// putTieGroup は同点になる行を tieGroupSize 件投入し、採番された id を返す。
+//
+// 🔴 id は投入順に増える（insert-only の bigserial）。この前提が崩れると
+// 「同点なら小さい id が勝つ」という期待そのものが書けなくなる。
+func putTieGroup(t *testing.T, ts *testStore, orgID org.ID) []int64 {
+	t.Helper()
+
+	chunks := make([]chunk.Chunk, 0, tieGroupSize)
+	for i := range tieGroupSize {
+		chunks = append(chunks, newChunk(chunkSpec{
+			orgID: orgID, documentID: 9, sourceID: 9,
+			chunkIndex: i, content: tieContent,
+		}))
+	}
+
+	ids, err := ts.store.Put(t.Context(), orgID, chunks)
+	if err != nil {
+		t.Fatalf("Put(同点の行): %v", err)
+	}
+
+	// Put は「入力と同じ順の id」を返す契約である (ADR 0013)。
+	if len(ids) != tieGroupSize {
+		t.Fatalf("採番された id の数 = %d, want %d", len(ids), tieGroupSize)
+	}
+
+	scrambleHeapOrder(t, ts, ids)
+
+	return ids
+}
+
+// scrambleHeapOrder は同点の行の**物理的な並び**を id の逆順にする。
+//
+// 🔑 PostgreSQL の UPDATE は行を書き換えず、新しい版を足す。⇒ id の大きい
+// ものから順に更新すると、ヒープ上の並びは id の降順になる（実測で確認した。
+// ctid が (7,13)=id 271 … (7,24)=id 260 の順に並ぶ）。投入直後のヒープは
+// id 昇順なので、これをやらないと「走査順＝id 昇順」という、本番では
+// 成り立たない条件でしか試していないことになる。
+//
+// ⚠️ 更新するのは採点に関わらない列（section_label）である。lexeme_text や
+// content を触ると ts_rank が動き、同点という前提そのものが壊れる。
+func scrambleHeapOrder(t *testing.T, ts *testStore, ids []int64) {
+	t.Helper()
+
+	for _, id := range slices.Backward(ids) {
+		_, err := ts.db.ExecContext(t.Context(),
+			`UPDATE chunks SET section_label = $2 WHERE id = $1`, id, "shuffled")
+		if err != nil {
+			t.Fatalf("物理順序を入れ替えられない (id=%d): %v", id, err)
+		}
+	}
+}
+
+// tieSpec は同点の行を「ベクトルでは絶対に候補に入らない」位置に置いた指定を返す。
+//
+// 🔑 角度 1.6 はコーパスのどれよりも遠い（candidateEmbedder は 1.5 まで）。
+// ⇒ 同点の行が候補に現れたなら、語彙側 top-K から来たとしか説明がつかない。
+func tieSpec(k int) storeSpec {
+	e := candidateEmbedder()
+	e.angles[tieQuery] = 0
+	e.angles[tieContent] = 1.6
+
+	spec := candidateSpec(k, postgres.DefaultEfSearch)
+	spec.embedder = e
+
+	return spec
+}
+
+// TestLexicalCandidatesBreakTiesByID は、語彙側 top-K の同点が id で切られる
+// ことを見る。
+//
+// 🔴 これは 10万件で実際に起きた欠陥の再発防止である。ts_rank は同点になる。
+// 2026-09-02 の実測では K=100 の境界に 36 行が同点で並び、第2ソートキーが
+// 無かったため、同じクエリの語彙側 top-K が 15 回の実行で **15 通り**の id 集合を
+// 返した。候補集合が変われば MAX(lexical_score) OVER () が変わり、最終順位の
+// 下位が入れ替わる ⇒ 2系統の順位が一致せず評価ハーネスが止まる
+// (docs/benchmarks/2026-09-02-eval-100k-after-index.md §9)。
+//
+// ⚠️ **このテストは「揺れ」を再現しない。** 2026-09-03 に確かめた:
+// 同点を 40 件に増やし、scrambleHeapOrder で物理順序を id の降順にしても、
+// 第2ソートキーを外した SQL は id 昇順を返し、このテストは緑のままだった。
+// 実行計画は Bitmap Heap Scan + top-N heapsort である。同じ形を psql で
+// Seq Scan にすると、同点 12 件のうち**最大側の id** が返る——つまり
+// 「どれが残るか」は plan 次第で、259 件では欲しい plan を安定して作れない。
+//
+// ⇒ **ここで固定するのは規則のほうである。** 同点なら小さい id が候補に入る、
+// と決めておけば、どの plan で走っても揺れる余地が SQL から消える。第2キーを
+// 落とす変更はこのテストを通り抜けうるが、そのときこのコメントが「なぜ
+// 要るのか」を次に読む人へ渡す。**検査で捕まえられない規則は、書いて残す。**
+func TestLexicalCandidatesBreakTiesByID(t *testing.T) {
+	const k = 5
+
+	orgA := mustOrgID(t, 1)
+	ts := candidateCorpus(t, tieSpec(k))
+	ids := putTieGroup(t, ts, orgA)
+
+	got := tiedCandidateIDs(t, ts, orgA, k)
+
+	// 同点なら小さい id が勝つ。⇒ 候補に入るのは先頭 K 件である。
+	want := ids[:k]
+	if !equalInt64s(got, want) {
+		t.Errorf("同点の行のうち候補に入った id = %v, want %v（先頭 %d 件）。"+
+			"語彙側 top-K の ORDER BY に第2ソートキー id が無い", got, want, k)
+	}
+}
+
+// TestLexicalCandidatesAreStableAcrossRuns は、同点を含む候補集合が実行を
+// またいで同じであることを見る。
+//
+// 🔑 §9 の実測が読み取ったのは「15 回で 15 通り」という**回数をまたいだ**
+// 不安定さだった。⇒ 検査も回数をまたいで見る。1 回の結果が正しいことと、
+// 何度実行しても同じであることは別の性質である。
+func TestLexicalCandidatesAreStableAcrossRuns(t *testing.T) {
+	const (
+		k     = 5
+		runs  = 15
+		first = 0
+	)
+
+	orgA := mustOrgID(t, 1)
+	ts := candidateCorpus(t, tieSpec(k))
+	putTieGroup(t, ts, orgA)
+
+	want := tiedCandidateIDs(t, ts, orgA, k)
+
+	for run := range runs {
+		if run == first {
+			continue
+		}
+
+		got := tiedCandidateIDs(t, ts, orgA, k)
+		if !equalInt64s(got, want) {
+			t.Fatalf("%d 回目の候補が違う: %v, 1 回目: %v。同点の切り方が決まっていない",
+				run+1, got, want)
+		}
+	}
+}
+
+// tiedCandidateIDs は検索を1回実行し、同点の行のうち候補に入ったものの id を返す。
+//
+// alpha=0（語彙のみ）で引く。ベクトル側の寄与を 0 にしても候補集合は
+// 両側 top-K の和集合のままなので、同点の行が「語彙側から来た」ことは変わらない。
+func tiedCandidateIDs(t *testing.T, ts *testStore, orgID org.ID, k int) []int64 {
+	t.Helper()
+
+	results, err := ts.store.Search(t.Context(), newQuery(querySpec{
+		orgID: orgID, text: tieQuery, limit: 4 * k, alpha: 0,
+		documentIDs: nil, sourceIDs: nil,
+	}))
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	ids := []int64{}
+
+	for _, r := range results {
+		if r.Chunk.Content == tieContent {
+			ids = append(ids, r.Chunk.ID)
+		}
+	}
+
+	slices.Sort(ids)
+
+	return ids
+}
+
+// equalInt64s は2つの id 列が同じかを返す。
+func equalInt64s(left, right []int64) bool { return slices.Equal(left, right) }
+
+// TestCandidateSearchForcesCustomPlans は plan_cache_mode が検索に届いている
+// ことを見る。
+//
+// 🔴 これが無いと 6 回目の検索から HNSW を使わなくなる。PostgreSQL は同じ
+// プリペアド文が 5 回走った後に汎用計画へ切り替えることがあり、候補モードの
+// SQL でそれが起きると、ベクトル側が Parallel Seq Scan + Sort に落ちる。
+// 2026-09-02 の 10万件の実測では、同じクエリの 6 回目が 40 倍遅くなった
+// (docs/benchmarks/2026-09-02-eval-100k-after-index.md §10)。
+//
+// 🔑 症状は「遅い」だけで結果は正しいまま返る。⇒ 検査で捕まえられるのは
+// 「設定が届いているか」だけである。速さは計測の仕事であって検査の仕事では
+// ない (ADR 0013 Decision 5)。EffectiveEfSearch と同じ流儀で、検索が使うのと
+// 同じ適用経路（applySearchLocals）を通して読み戻す。
+func TestCandidateSearchForcesCustomPlans(t *testing.T) {
+	const k = 20
+
+	ts := candidateCorpus(t, candidateSpec(k, postgres.DefaultEfSearch))
+
+	got, err := ts.store.EffectivePlanCacheMode(t.Context())
+	if err != nil {
+		t.Fatalf("EffectivePlanCacheMode: %v", err)
+	}
+
+	if want := "force_custom_plan"; got != want {
+		t.Errorf("plan_cache_mode = %q, want %q（SET LOCAL が届いていない）", got, want)
+	}
+}
+
+// TestCandidateSearchKeepsTheHNSWIndexWhenRepeated は、同じクエリを繰り返しても
+// 実行計画から索引が消えないことを見る。
+//
+// 🔴 切り替わるのは 6 回目からである。1 回だけ EXPLAIN を取る
+// TestCandidateSearchUsesTheHNSWIndex では、この欠陥は原理的に見えない。
+//
+// ⚠️ このテストは緑になっても「切り替わらないこと」を証明しない。プリペアド文の
+// 実行回数は接続ごとに数えられるので、プールが毎回別の接続を返せば 6 回目に
+// 到達しない。⇒ **赤くなったときだけ意味がある**検査である。決定的な保証は
+// TestCandidateSearchForcesCustomPlans（設定の読み戻し）のほうが持つ。
+func TestCandidateSearchKeepsTheHNSWIndexWhenRepeated(t *testing.T) {
+	const (
+		k = 20
+		// 汎用計画へ切り替わるのは 6 回目からなので、それを確実に越える回数。
+		repeats = 10
+	)
+
+	ts := candidateCorpus(t, candidateSpec(k, postgres.DefaultEfSearch))
+	analyzeChunks(t, ts)
+
+	query := newQuery(querySpec{
+		orgID: mustOrgID(t, 1), text: "recall_store", limit: 10, alpha: 0.8,
+		documentIDs: nil, sourceIDs: nil,
+	})
+
+	for run := range repeats {
+		// 検索そのものも走らせる。EXPLAIN だけを繰り返すと、本番が使う文の
+		// 実行回数が増えないので、条件が本番と揃わない。
+		if _, err := ts.store.Search(t.Context(), query); err != nil {
+			t.Fatalf("%d 回目の Search: %v", run+1, err)
+		}
+
+		plan, err := ts.store.ExplainSearch(t.Context(), query)
+		if err != nil {
+			t.Fatalf("%d 回目の ExplainSearch: %v", run+1, err)
+		}
+
+		if !strings.Contains(plan, "chunks_embedding_hnsw") {
+			t.Fatalf("%d 回目の実行計画から HNSW が消えた。"+
+				"プリペアド文が汎用計画へ切り替わっている:\n%s", run+1, plan)
+		}
 	}
 }
 

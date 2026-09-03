@@ -104,7 +104,7 @@ func ErrCandidateK() error { return errCandidateK }
 
 // EffectiveEfSearch は検索と同じトランザクション条件で hnsw.ef_search を読み戻す。
 //
-// 🔴 検索が使うのと**同じ** setEfSearch を通す。テストが自前で SET を書くと、
+// 🔴 検索が使うのと**同じ** applySearchLocals を通す。テストが自前で SET を書くと、
 // 「テストの SET は効くが検索の SET は効いていない」状態を見逃す。
 //
 // 🔑 SET LOCAL はトランザクション期間の設定なので、外側からは観測できない。
@@ -115,7 +115,7 @@ func (s *Store) EffectiveEfSearch(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("%w: begin: %s", errSearch, err.Error())
 	}
 
-	if err := s.setEfSearch(ctx, tx); err != nil {
+	if err := s.applySearchLocals(ctx, tx); err != nil {
 		return "", errors.Join(err, tx.Rollback())
 	}
 
@@ -123,6 +123,36 @@ func (s *Store) EffectiveEfSearch(ctx context.Context) (string, error) {
 	if err := tx.QueryRowContext(ctx, `SHOW hnsw.ef_search`).Scan(&value); err != nil {
 		return "", errors.Join(
 			fmt.Errorf("%w: show hnsw.ef_search: %s", errSearch, err.Error()), tx.Rollback())
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("%w: commit: %s", errSearch, err.Error())
+	}
+
+	return value, nil
+}
+
+// EffectivePlanCacheMode は検索と同じトランザクション条件で plan_cache_mode を
+// 読み戻す。
+//
+// 🔴 これを直接読むしかない。汎用計画への切り替えは 6 回目から起きる「遅くなる
+// だけ」の症状で、結果は正しいまま返る。EXPLAIN も 1 回目は custom 計画なので
+// 索引が現れる。⇒ 設定が届いているかを見る以外に、コードの検査で捕まえる手が無い
+// (docs/benchmarks/2026-09-02-eval-100k-after-index.md §10)。
+func (s *Store) EffectivePlanCacheMode(ctx context.Context) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("%w: begin: %s", errSearch, err.Error())
+	}
+
+	if err := s.applySearchLocals(ctx, tx); err != nil {
+		return "", errors.Join(err, tx.Rollback())
+	}
+
+	var value string
+	if err := tx.QueryRowContext(ctx, `SHOW plan_cache_mode`).Scan(&value); err != nil {
+		return "", errors.Join(
+			fmt.Errorf("%w: show plan_cache_mode: %s", errSearch, err.Error()), tx.Rollback())
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -161,8 +191,8 @@ func (s *Store) ExplainSearch(ctx context.Context, q index.Query) (string, error
 
 // explainWithinTx は Search と同じトランザクション条件で EXPLAIN する。
 //
-// hnsw.ef_search を SET LOCAL してから計画を取る。設定が違えば planner の
-// 見積りも変わるので、本番と同じ条件で読む。
+// hnsw.ef_search と plan_cache_mode を SET LOCAL してから計画を取る。設定が違えば
+// planner の見積りも変わるので、本番と同じ条件で読む。
 //
 // 🔴 enable_seqscan と enable_sort を切る。理由を残す:
 //
@@ -187,7 +217,7 @@ func (s *Store) explainWithinTx(ctx context.Context, plan searchPlan) (string, e
 		return "", fmt.Errorf("%w: begin: %s", errSearch, err.Error())
 	}
 
-	if err := s.setEfSearch(ctx, tx); err != nil {
+	if err := s.applySearchLocals(ctx, tx); err != nil {
 		return "", errors.Join(err, tx.Rollback())
 	}
 
