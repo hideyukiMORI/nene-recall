@@ -132,6 +132,24 @@ const candidatesCTE = `WITH candidates AS (
 //	candidates    … 候補行に**両方の**スコアを付け直す。@@ に当たらなかった行の
 //	                ts_rank は 0 になる
 //
+// 🔴 lex の ORDER BY には第2ソートキー id が要る。ts_rank は同点になる。
+//
+// 2026-09-02 の 10万件の実測で、K=100 の**境界に 36 行が同点で並ぶ**クエリが
+// あった（q-010・`@@` に 28,760 行が当たる）。第2キーが無いと、そのうちどの行が
+// 候補に入るかは実行ごとに決まらない——同じベクトル・同じ tsquery で lex を
+// 15 回実行したら **15 通りの id 集合**が返った（ベクトル側 vec は 15 回とも同一）。
+//
+// 候補集合が変われば MAX(lexical_score) OVER ()（候補集合内の最大値）が変わり、
+// 最終順位の下位が入れ替わる。⇒ 系統1（Search）と系統2（SearchVector）の順位が
+// 一致せず、評価ハーネスが止まる。**259 件では同点が積み上がらないので出ない。**
+// 正本は docs/benchmarks/2026-09-02-eval-100k-after-index.md §9。
+//
+// ⚠️ vec 側には第2キーを**置けない**。ORDER BY が距離そのものでなくなると
+// HNSW の順序に乗らず、索引が黙って使われなくなる（この CTE の存在理由が消える）。
+// 上の実測では vec は安定していたが、それは同点が無かったということであって、
+// 保証ではない。ベクトル側の同点が問題になったら、K を増やすか後段で決定的に
+// 切るかであって、ここに id を足す手は取れない。
+//
 // 🔴 org_id の WHERE は vec と lex の**両方**に入れる。候補生成の段で別 org が
 // 混ざると、後段で弾いたとしても「別テナントの文書を読んだ」ことになる。
 // 分離は方式や経路の選択とは独立に成り立っていなければならない (ADR 0003)。
@@ -492,7 +510,8 @@ func (s *Store) searchPlan(q index.Query, vector string) (searchPlan, error) {
 	return searchPlan{statement: statement, args: args}, nil
 }
 
-// searchWithinTx は hnsw.ef_search を効かせたトランザクションの中で検索する。
+// searchWithinTx は hnsw.ef_search と plan_cache_mode を効かせた
+// トランザクションの中で検索する。
 //
 // 🔴 SET LOCAL はトランザクション期間の設定である。プールから直接 SET すると
 // 「その接続だけが設定を持ち越す」状態になり、次にその接続を掴んだ検索が
@@ -509,7 +528,7 @@ func (s *Store) searchWithinTx(
 		return nil, fmt.Errorf("%w: begin: %s", errSearch, err.Error())
 	}
 
-	results, err := s.searchWithEfSearch(ctx, tx, q, plan)
+	results, err := s.searchWithLocalSettings(ctx, tx, q, plan)
 	if err != nil {
 		// 巻き戻しの失敗も握り潰さない（errors.Join は nil を落とす）。
 		return nil, errors.Join(err, tx.Rollback())
@@ -522,15 +541,64 @@ func (s *Store) searchWithinTx(
 	return results, nil
 }
 
-// searchWithEfSearch は探索幅を設定してから検索を走らせる。
-func (s *Store) searchWithEfSearch(
+// searchWithLocalSettings は候補モードの設定を効かせてから検索を走らせる。
+func (s *Store) searchWithLocalSettings(
 	ctx context.Context, tx *sql.Tx, q index.Query, plan searchPlan,
 ) ([]index.Result, error) {
-	if err := s.setEfSearch(ctx, tx); err != nil {
+	if err := s.applySearchLocals(ctx, tx); err != nil {
 		return nil, err
 	}
 
 	return queryResults(ctx, tx, q, plan)
+}
+
+// applySearchLocals は候補モードがトランザクション期間だけ要する設定を適用する。
+//
+// 🔴 2つの設定を1箇所にまとめる。検索・EXPLAIN・テストの読み戻しがすべてここを
+// 通るので、「検索には効いているが EXPLAIN には効いていない」条件のずれが
+// 書けなくなる。計測の条件は経路によって変わってはならない (ADR 0022 Decision 4)。
+func (s *Store) applySearchLocals(ctx context.Context, tx *sql.Tx) error {
+	if err := s.setEfSearch(ctx, tx); err != nil {
+		return err
+	}
+
+	return setPlanCacheMode(ctx, tx)
+}
+
+// setPlanCacheMode はトランザクション期間だけ計画のキャッシュを切る。
+//
+// 🔴 これが無いと、6 回目の検索から HNSW を使わなくなる。
+//
+// database/sql（pgx stdlib）は検索 SQL を**パラメータつきのプリペアド文**として
+// 実行する。PostgreSQL は同じプリペアド文が 5 回走った後、汎用計画（引数の値を
+// 見ない計画）の見積りが custom 計画の平均を下回れば汎用計画へ切り替える。
+// 候補モードの SQL でそれが起きると、ベクトル側の ORDER BY が索引ではなく
+// Parallel Seq Scan + Sort になる——2026-09-02 の 10万件の実測で、同じクエリの
+// 6 回目が **40 倍**遅くなった（89ms → 3,625ms / 258ms → 4,223ms）。
+// 正本は docs/benchmarks/2026-09-02-eval-100k-after-index.md §10。
+//
+// 🔑 症状は「遅い」だけで、結果は正しいまま返る。⇒ 索引を張ったのに速くならない
+// という形でしか表面化せず、EXPLAIN を1回取っただけでは見えない（1回目は custom
+// 計画なので索引が現れる）。**設定で塞ぐのが最小の手当てである。**
+//
+// 却下した代替: pgx の QueryExecModeSimpleProtocol。プリペアド文そのものを
+// やめれば汎用計画も生まれないが、ストアの全クエリ（取り込みを含む）の実行方式が
+// 変わる。検索1経路の計画のために、測っていない経路まで動かさない。
+//
+// ⚠️ 候補モードだけに掛かる。全探索の経路にトランザクションを足していないのは
+// before/after で測るものを変えないためで、その判断はここでも変えない
+// (ADR 0022 Decision 3・CLAUDE.md 地雷10)。全探索の ORDER BY は合成式なので、
+// 汎用計画に切り替わっても索引に乗れないことに変わりはない。
+func setPlanCacheMode(ctx context.Context, tx *sql.Tx) error {
+	// set_config(..., true) は SET LOCAL と同じ意味。SET 文を使わない理由は
+	// setEfSearch と同じである。
+	const statement = `SELECT set_config('plan_cache_mode', 'force_custom_plan', true)`
+
+	if _, err := tx.ExecContext(ctx, statement); err != nil {
+		return fmt.Errorf("%w: set plan_cache_mode: %s", errSearch, err.Error())
+	}
+
+	return nil
 }
 
 // setEfSearch はトランザクション期間だけ hnsw.ef_search を上書きする。
