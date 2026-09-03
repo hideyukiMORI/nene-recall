@@ -178,7 +178,7 @@ const candidateSelectionCTE = `WITH vec AS (
     AND (cardinality($3::bigint[]) = 0 OR document_id = ANY ($3::bigint[]))
     AND (cardinality($4::bigint[]) = 0 OR source_id   = ANY ($4::bigint[]))
     AND lexemes @@ to_tsquery('simple', $6)
-  ORDER BY ts_rank(lexemes, to_tsquery('simple', $6), $7) DESC
+  ORDER BY ts_rank(lexemes, to_tsquery('simple', $6), $7) DESC, id
   LIMIT $9
 ), candidate_ids AS (
   SELECT id FROM vec
